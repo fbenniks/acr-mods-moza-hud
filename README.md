@@ -82,9 +82,10 @@ working hard.
 
 ### One click to save it in StageSwitch
 
-If you use **AC Rally StageSwitch** (the companion app that sets the FFB gain per stage automatically), MozaHud can
-hand the suggested value straight to it. You choose where it applies: just this car on this stage, this car on the
-whole rally, this stage for every car, or the whole rally for every car. Next time you load that stage, it's set.
+If you use **[AC Rally StageSwitch](https://github.com/fbenniks/acr-mods-stageswitch)** (the companion app that sets the FFB gain per
+stage automatically), MozaHud can send it the suggested gain. You choose where it applies: just this car on this
+stage, this car on the whole rally, this stage for every car, or the whole rally for every car. Next time you load
+that stage, it's set.
 
 ![Apply in StageSwitch: four choices](docs/images/apply-in-stageswitch.png)
 
