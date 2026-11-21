@@ -26,8 +26,9 @@ namespace MozaHud
         DateTime? _finishedAt;
         DateTime _nextSnapshotLog, _nextProcessCheck;
         bool _gameRunning;
-        bool _resolved, _waitForReset;
-        int _prevStatus = -1;
+        bool _resolved, _waitForReset, _prevOnStage, _physicsTicks;
+        int _prevStatus = -1, _lastPhysicsPacket = int.MinValue;
+        DateTime _physicsStillSince, _nextRawLog;
 
         /// <summary>Called on the polling thread when a run was saved (or discarded: null).</summary>
         public Action<StageRun> Saved;
@@ -56,24 +57,28 @@ namespace MozaHud
                 Log.Write("Game status " + _prevStatus + " -> " + g.Status + ": " + g.Describe());
                 _prevStatus = g.Status;
             }
+            // AC Rally fills the track name while a stage is loaded and clears it in the menus (its status field
+            // doesn't follow ACC's off/live/pause), so the track name is what says "on a stage".
+            bool onStage = g.Memory && g.Track.Length > 0 && g.Status != 1;
+            if (onStage != _prevOnStage) { Log.Write((onStage ? "On stage: " : "Off stage: ") + g.Describe()); _prevOnStage = onStage; }
 
             if (_run != null)
             {
                 string end = null;
                 if (!g.Running || !g.Memory) end = "game closed";
-                else if (g.Status == 0) end = "menu";
+                else if (g.Track.Length == 0) end = "menu";
                 else if (g.Track != _run.Track) end = "track changed";
                 else if (_lastCurTime > 5000 && g.CurrentTimeMs + 3000 < _lastCurTime) end = "restart";
                 else if (_finishedAt.HasValue && now - _finishedAt.Value > TimeSpan.FromSeconds(5)) end = "finished";
                 if (end != null) Finish(end, g);
             }
 
-            // after a finish the game stays live on the results screen: wait for the menu or a reset stage clock
-            if (_waitForReset && (g.Status != 2 || g.CurrentTimeMs + 3000 < _lastCurTime)) _waitForReset = false;
+            // after a finish the stage stays loaded on the results screen: wait for the menu or a reset stage clock
+            if (_waitForReset && (!onStage || g.CurrentTimeMs + 3000 < _lastCurTime)) _waitForReset = false;
 
             if (_run == null)
             {
-                if (g.Memory && g.Status == 2 && g.Track.Length > 0 && !_waitForReset) Begin(g, rotationDeg, maxNm);
+                if (onStage && !_waitForReset) Begin(g, rotationDeg, maxNm);
                 else
                 {
                     if (g.CurrentTimeMs > 0) _lastCurTime = g.CurrentTimeMs;
@@ -94,11 +99,20 @@ namespace MozaHud
 
             if (now >= _nextSnapshotLog)
             {
-                _nextSnapshotLog = now.AddSeconds(10);
+                _nextSnapshotLog = now.AddSeconds(5);
                 Log.Write("Telemetry: " + g.Describe() + " wheel " + (wheel.HasValue ? wheel.Value.ToString("0.00") : "?"));
+                if (now >= _nextRawLog) { _nextRawLog = now.AddSeconds(30); Log.Write("Raw telemetry: " + GameTelemetry.RawDump()); }
             }
 
-            if (g.Status != 2) { Status = "Recording paused (" + (g.Status == 3 ? "game paused" : "replay") + ")"; return; }
+            // Paused: only when the physics data is known to tick and has stopped (AC Rally may not fill it at all).
+            if (g.PhysicsPacket != _lastPhysicsPacket)
+            {
+                if (_lastPhysicsPacket != int.MinValue) _physicsTicks = true;
+                _lastPhysicsPacket = g.PhysicsPacket;
+                _physicsStillSince = now;
+            }
+            bool paused = g.Status == 3 || (_physicsTicks && now - _physicsStillSince > TimeSpan.FromMilliseconds(500));
+            if (paused) { Status = "Recording paused"; return; }
 
             bool lockNow = wheel.HasValue && Math.Abs(wheel.Value) >= LockThreshold;
             var p = new StagePoint
@@ -131,6 +145,9 @@ namespace MozaHud
             _finishedAt = null;
             _resolved = false;
             _nextSnapshotLog = DateTime.UtcNow;
+            _nextRawLog = DateTime.UtcNow;
+            _physicsTicks = false;
+            _lastPhysicsPacket = int.MinValue;
             Log.Write("Stage run started: " + g.Describe() + " rotation " + rotationDeg + "°");
         }
 
@@ -155,7 +172,7 @@ namespace MozaHud
             if (!_resolved) { _run = run; Resolve(); _run = null; }
             run.End = DateTime.Now;
             run.EndReason = _finishedAt.HasValue ? "finished" : reason;
-            _waitForReset = _finishedAt.HasValue && g.Status == 2;
+            _waitForReset = _finishedAt.HasValue && g.Track.Length > 0;
             Log.Write("Stage run ended (" + run.EndReason + "): " + g.Describe() + ", " + run.Points.Count + " points");
 
             // drop the wait at the start line, keep 3 s before the car first moves
@@ -167,7 +184,8 @@ namespace MozaHud
                 for (int i = 0; i < run.Points.Count; i++) { var p = run.Points[i]; p.T -= shift; run.Points[i] = p; }
             }
 
-            int driving = run.Points.Count(p => p.Speed > 5);
+            bool hasSpeed = run.Points.Any(p => p.Speed > 0);
+            int driving = hasSpeed ? run.Points.Count(p => p.Speed > 5) : run.Points.Count;
             if (driving < MinDrivingPoints)
             {
                 Log.Write("Run not saved: only " + driving / 10 + " s of driving");

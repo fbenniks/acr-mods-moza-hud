@@ -59,12 +59,13 @@ namespace MozaHud
             var smooth = new List<double>();
             var raw = new List<double>();
             double sum = 0;
+            bool hasSpeed = run.Points.Any(p => p.Speed > 0);   // without speed data, all stage time counts
             foreach (var p in run.Points)
             {
                 if (p.TMot > a.MaxMotor) a.MaxMotor = p.TMot;
                 if (p.TMos > a.MaxMosfet) a.MaxMosfet = p.TMos;
                 if (p.Lock) { a.LockPoints++; if (p.Clip) a.LockClipPoints++; continue; }
-                if (p.Speed < DrivingKmh) continue;
+                if (hasSpeed && p.Speed < DrivingKmh) continue;
                 a.DrivingPoints++;
                 if (p.Clip) a.ClipPoints++;
                 double s = Math.Abs(p.Tq);

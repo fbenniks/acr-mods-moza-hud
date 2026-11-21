@@ -79,6 +79,39 @@ namespace MozaHud
             return s;
         }
 
+        /// <summary>
+        /// Every non-zero 4-byte word of the physics and graphics blocks (offset=int/float), to learn which fields
+        /// AC Rally actually fills. Logged during stages.
+        /// </summary>
+        public static string RawDump()
+        {
+            var sb = new StringBuilder();
+            foreach (var part in new[] { new { Name = "physics", Len = 800 }, new { Name = "graphics", Len = 1600 } })
+            {
+                try
+                {
+                    using (var m = MemoryMappedFile.OpenExisting("Local\\acpmf_" + part.Name, MemoryMappedFileRights.Read))
+                    using (var a = m.CreateViewAccessor(0, part.Len, MemoryMappedFileAccess.Read))
+                    {
+                        sb.Append(part.Name).Append(':');
+                        int shown = 0;
+                        for (int off = 0; off < part.Len && shown < 80; off += 4)
+                        {
+                            int i = a.ReadInt32(off);
+                            if (i == 0) continue;
+                            float f = a.ReadSingle(off);
+                            bool looksFloat = !float.IsNaN(f) && Math.Abs(f) > 1e-6 && Math.Abs(f) < 1e7 && (i < -100000 || i > 100000);
+                            sb.Append(' ').Append(off).Append('=').Append(looksFloat ? f.ToString("0.###", CultureInfo.InvariantCulture) + "f" : i.ToString(CultureInfo.InvariantCulture));
+                            shown++;
+                        }
+                        sb.Append("  ");
+                    }
+                }
+                catch (Exception ex) { sb.Append(part.Name).Append(": ").Append(ex.Message).Append("  "); }
+            }
+            return sb.ToString();
+        }
+
         static string ReadWide(MemoryMappedViewAccessor a, int offset, int chars)
         {
             var buf = new byte[chars * 2];
