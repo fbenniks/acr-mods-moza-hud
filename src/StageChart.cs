@@ -146,18 +146,11 @@ namespace MozaHud
             using (var lockBrush = new SolidBrush(Color.FromArgb(46, 140, 150, 170)))
                 for (int c = 0; c < cols; c++) if (lockc[c]) g.FillRectangle(lockBrush, tr.Left + c, tr.Top, 1, tr.Height);
             // per column: 0 normal (orange), 1 clipping (red), 2 at the soft lock (grey) — same colours as the marks on top
-            // A clipping moment is often a single pixel column when the whole stage is shown: widen the red (and grey)
-            // stretches by 2 columns each side so they stand out.
+            // exactly the columns whose 100 ms points clipped / were at the soft lock (no widening)
             var state = new int[cols];
-            for (int c = 0; c < cols; c++)
-            {
-                if (lockc[c]) { for (int k = Math.Max(0, c - 1); k <= Math.Min(cols - 1, c + 1); k++) state[k] = 2; }
-            }
-            for (int c = 0; c < cols; c++)
-            {
-                if (clip[c]) { for (int k = Math.Max(0, c - 2); k <= Math.Min(cols - 1, c + 2); k++) if (state[k] != 2 || lockc[c]) state[k] = lockc[k] ? 2 : 1; }
-            }
-            DrawTorque(g, tq, tqMax, has, state, cols, tr.Left, ty, tr.Bottom);
+            for (int c = 0; c < cols; c++) state[c] = lockc[c] ? 2 : clip[c] ? 1 : 0;
+            float pointPx = (float)(cols / ((_viewTo - _viewFrom) * 10));   // width of one 100 ms point
+            DrawTorque(g, tq, tqMax, has, state, cols, tr.Left, ty, tr.Bottom, Math.Max(1.5f, pointPx));
             using (var pen = new Pen(Theme.Bad, 1f) { DashStyle = DashStyle.Dash })
             {
                 float ly = ty(_maxNm);
@@ -259,43 +252,62 @@ namespace MozaHud
         static readonly Color[] StateColors = { Theme.Accent, Theme.Bad, Color.FromArgb(150, 160, 178) };
 
         /// <summary>
-        /// Raw-peak band and smoothed torque line, coloured per stretch by state (normal / clipping / soft lock).
-        /// A stretch starts at the last point of the previous one, so the line stays connected.
+        /// Raw-peak band (orange) with a red/grey bar exactly where a 100 ms point clipped / was at the soft lock,
+        /// from the bottom up to that point's raw peak; then the smoothed torque line, which is red/grey only between
+        /// two consecutive points that both clipped / were at the soft lock. Nothing next to them is coloured.
         /// </summary>
         static void DrawTorque(Graphics g, float[] tq, float[] tqMax, bool[] has, int[] state, int cols, int x0,
-                               Func<double, float> y, float baseY)
+                               Func<double, float> y, float baseY, float barW)
         {
-            var line = new List<PointF>();
             var band = new List<PointF>();
-            int cur = -1;
-            PointF? prevLine = null, prevBand = null;
-            Action flush = () =>
-            {
-                if (cur < 0 || line.Count < 2) return;
-                using (var brush = new SolidBrush(Color.FromArgb(cur == 0 ? 70 : cur == 1 ? 150 : 110, StateColors[cur])))
+            for (int c = 0; c < cols; c++) if (has[c]) band.Add(new PointF(x0 + c, y(tqMax[c])));
+            if (band.Count >= 2)
+                using (var brush = new SolidBrush(Color.FromArgb(70, StateColors[0])))
                 {
                     var poly = new List<PointF>(band) { new PointF(band[band.Count - 1].X, baseY), new PointF(band[0].X, baseY) };
                     g.FillPolygon(brush, poly.ToArray());
                 }
-                using (var pen = new Pen(StateColors[cur], cur == 0 ? 1.6f : 2f) { LineJoin = LineJoin.Round })
-                    g.DrawLines(pen, line.ToArray());
-            };
-            for (int c = 0; c < cols; c++)
-            {
-                if (!has[c]) continue;
-                var pl = new PointF(x0 + c, y(tq[c]));
-                var pb = new PointF(x0 + c, y(tqMax[c]));
-                if (state[c] != cur)
+
+            using (var clipBar = new SolidBrush(Color.FromArgb(190, StateColors[1])))
+            using (var lockBar = new SolidBrush(Color.FromArgb(150, StateColors[2])))
+                for (int c = 0; c < cols; c++)
                 {
-                    flush();
-                    line.Clear(); band.Clear();
-                    if (prevLine.HasValue) { line.Add(prevLine.Value); band.Add(prevBand.Value); }
-                    cur = state[c];
+                    if (!has[c] || state[c] == 0) continue;
+                    float top = y(tqMax[c]);
+                    g.FillRectangle(state[c] == 1 ? clipBar : lockBar, x0 + c - barW / 2, top, barW, baseY - top);
                 }
-                line.Add(pl); band.Add(pb);
-                prevLine = pl; prevBand = pb;
+
+            // line: runs of segments with the same colour; a segment is red/grey only if both ends are
+            var pens = new[]
+            {
+                new Pen(StateColors[0], 1.6f) { LineJoin = LineJoin.Round },
+                new Pen(StateColors[1], 2.2f) { LineJoin = LineJoin.Round },
+                new Pen(StateColors[2], 2f) { LineJoin = LineJoin.Round },
+            };
+            try
+            {
+                var run = new List<PointF>();
+                int runState = -1, prevState = -1;
+                PointF? prev = null;
+                for (int c = 0; c < cols; c++)
+                {
+                    if (!has[c]) continue;
+                    var p = new PointF(x0 + c, y(tq[c]));
+                    if (prev.HasValue)
+                    {
+                        int seg = state[c] != 0 && state[c] == prevState ? state[c] : 0;
+                        if (seg != runState)
+                        {
+                            if (run.Count >= 2) g.DrawLines(pens[runState], run.ToArray());
+                            run.Clear(); run.Add(prev.Value); runState = seg;
+                        }
+                        run.Add(p);
+                    }
+                    prev = p; prevState = state[c];
+                }
+                if (run.Count >= 2) g.DrawLines(pens[runState], run.ToArray());
             }
-            flush();
+            finally { foreach (var pen in pens) pen.Dispose(); }
         }
 
         // Legend in the strip above the graph, after the unit label.
@@ -327,10 +339,12 @@ namespace MozaHud
             {
                 StageRecorder.FormatTime(p.T) + "   " + p.Speed.ToString("0") + " km/h",
                 "Torque " + Math.Abs(p.Tq).ToString("0.0") + " Nm   peak " + p.TqMax.ToString("0.0") + " Nm",
-                "Wheel " + (p.Wheel * 100).ToString("0") + " %" + (p.Lock ? "  (soft lock)" : p.Clip ? "  CLIPPING" : ""),
+                "Wheel " + (p.Wheel * 100).ToString("0") + " %" + (p.Lock ? "  (soft lock)" : ""),
+                p.Clip && !p.Lock ? "CLIPPING: a raw peak hit the limit in this 0.1 s" : null,
                 "Motor " + p.TMot.ToString("0.0") + " °C   MOSFET " + p.TMos.ToString("0.0") + " °C",
             };
             var size = new SizeF(0, 0);
+            lines.RemoveAll(l => l == null);
             foreach (var l in lines) { var s = g.MeasureString(l, Small); size = new SizeF(Math.Max(size.Width, s.Width), size.Height + s.Height); }
             var box = new RectangleF(x + 10, tr.Top + 22, size.Width + 14, size.Height + 10);
             if (box.Right > Width - 4) box.X = x - 10 - box.Width;

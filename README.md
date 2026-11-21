@@ -47,9 +47,10 @@ automatically and shows, per stage:
     *room to spare* (clipping under half the allowed share and the strongest moments under 80 % of 5.5 Nm, with how
     much more gain would fit; at the game's maximum of 200: raise the base's strength in Pit House) or *close to your
     limit* (within 0.5 points, −5 % if it feels harsh).
-- **Torque graph**: smoothed torque and the raw 100 ms peaks (band), coloured per stretch: orange normal, **red where
-  it clipped**, **grey where the wheel was at the soft lock** (same colours as the marks along the top); the limit
-  dashed. The stage list and header show the rally's flag and the car's logo (drawing code copied from StageSwitch's
+- **Torque graph**: smoothed torque (line) and the raw 100 ms peaks (orange band). Every 100 ms in which a raw peak
+  hit the limit gets a **red bar** up to that peak, exactly that wide; at the **soft lock** the bar is **grey** (same
+  colours as the marks along the top). The line is red/grey only between two such moments in a row: it's smoothed, so
+  at a short clip it stays below the limit while the raw peak touches it. The limit is dashed. The stage list and header show the rally's flag and the car's logo (drawing code copied from StageSwitch's
   `RallyStyle.cs` / `BrandMark.cs`). The base's rotation setting is read from the base (e.g. 450°); the
   wheel position comes from the Windows joystick axis, which spans exactly that rotation (the game's steering
   value is identical). Within 3 % of full lock clipping is the soft lock pushing back and isn't counted.
