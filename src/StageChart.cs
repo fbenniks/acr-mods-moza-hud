@@ -42,7 +42,6 @@ namespace MozaHud
                 case Verdict.Lower: return Bad;
                 case Verdict.SlightlyLower: return Warn;
                 case Verdict.Good: return Good;
-                case Verdict.Raise: return Blue;
                 default: return Faint;
             }
         }

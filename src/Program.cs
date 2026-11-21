@@ -80,6 +80,7 @@ namespace MozaHud
                 Application.ThreadException += (s, e) => Log.Write("UI error: " + e.Exception);
                 AppDomain.CurrentDomain.UnhandledException += (s, e) => Log.Write("Fatal: " + e.ExceptionObject);
                 Log.Start();
+                Settings.Load();
                 Application.Run(new TrayApp(showWindow: Array.IndexOf(args, "--tray") < 0));
             }
             return 0;

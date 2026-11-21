@@ -20,11 +20,14 @@ The tray icon shows the motor temperature; hover for everything.
 The MozaHud window (opens at start; tray icon double-click or **Open MozaHud**) records every AC Rally stage
 automatically and shows, per stage:
 
-- **Advice**: too strong (lower the gain), a bit strong, good, or headroom (raise the gain), with a suggested
-  gain when it's known (e.g. *150 → 135*). Only time while driving (over 5 km/h) counts. Rules: clipping ≥ 5 % of
-  the time → lower 10–30 %; 1.5–5 % → lower 5–10 %; otherwise, if even the strongest moments (99th percentile)
-  stay under 80 % of the base's 5.5 Nm → raise; else good. At the game's maximum (200) "raise" means: raise the
-  base's FFB strength in Pit House.
+- **Advice** against **Allowed clipping** (top right of the window, one decimal, default 2.5 %; saved in
+  `%APPDATA%\MozaHud\settings.ini`). Only time while driving (over 5 km/h) counts.
+  - Clipping above the allowed share → *a bit strong* (less than 1.5 points over) or *too strong*, with a suggested
+    gain (e.g. *150 → 135*): the step grows with the excess (0.6 points over → −5 %, 2.9 over → −10 %, max −30 %).
+  - At or below it → *good* (green), with the found clipping explained against the setting, and at most a small hint:
+    *room to spare* (clipping under half the allowed share and the strongest moments under 80 % of 5.5 Nm, with how
+    much more gain would fit; at the game's maximum of 200: raise the base's strength in Pit House) or *close to your
+    limit* (within 0.5 points, −5 % if it feels harsh).
 - **Torque graph**: smoothed torque, raw 100 ms peaks (faint band), the limit (dashed), red marks where it clipped,
   grey where the wheel was at the **soft lock**. The base's rotation setting is read from the base (e.g. 450°); the
   wheel position comes from the Windows joystick axis, which spans exactly that rotation (the game's steering

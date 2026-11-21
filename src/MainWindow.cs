@@ -49,8 +49,31 @@ namespace MozaHud
             _status.SetBounds(140, 10, 600, 20); _status.ForeColor = Theme.Text; _status.Font = BoldFont;
             _base.SetBounds(140, 31, 900, 18); _base.ForeColor = Theme.Muted; _base.Font = SmallFont;
             _status.Anchor = _base.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
-            header.Controls.AddRange(new Control[] { logo, _status, _base });
-            header.Resize += (s, e) => { _status.Width = header.Width - 156; _base.Width = header.Width - 156; };
+            // allowed clipping setting, top right
+            var allowLabel = new Label { Text = "Allowed clipping", AutoSize = true, ForeColor = Theme.Muted, Font = SmallFont };
+            var allow = new NumericUpDown
+            {
+                DecimalPlaces = 1, Increment = 0.1m, Minimum = 0, Maximum = 50, Width = 58,
+                Value = (decimal)Settings.AllowedClipPct, BackColor = Theme.PanelAlt, ForeColor = Theme.Text,
+                BorderStyle = BorderStyle.FixedSingle, TextAlign = HorizontalAlignment.Right, Font = BoldFont,
+            };
+            var pct = new Label { Text = "%", AutoSize = true, ForeColor = Theme.Muted, Font = BoldFont };
+            allow.ValueChanged += (s, e) => Settings.SetAllowedClipPct((double)allow.Value);
+            var tip = new ToolTip();
+            const string tipText = "Share of the driving time the motor may be at its limit (clipping) before MozaHud recommends a lower FFB gain.";
+            tip.SetToolTip(allow, tipText); tip.SetToolTip(allowLabel, tipText);
+            Action placeAllow = () =>
+            {
+                pct.Location = new Point(header.Width - 16 - pct.Width, 20);
+                allow.Location = new Point(pct.Left - 2 - allow.Width, 16);
+                allowLabel.Location = new Point(allow.Left - 6 - allowLabel.Width, 21);
+                _status.Width = _base.Width = Math.Max(100, allowLabel.Left - 150);
+            };
+            header.Controls.AddRange(new Control[] { logo, _status, _base, allowLabel, allow, pct });
+            header.Resize += (s, e) => placeAllow();
+            Load += (s, e) => placeAllow();
+            _status.Anchor = _base.Anchor = AnchorStyles.Left | AnchorStyles.Top;
+            Settings.Changed += OnSettingsChanged;
 
             // ---- stage list ----
             var left = new Panel { Dock = DockStyle.Left, Width = 300, BackColor = Theme.Panel, Padding = new Padding(0, 8, 0, 0) };
@@ -82,7 +105,7 @@ namespace MozaHud
             var right = new Panel { Dock = DockStyle.Fill, Padding = new Padding(20, 14, 20, 16), BackColor = Theme.Bg };
             _title.Dock = DockStyle.Top; _title.Height = 32; _title.Font = TitleFont; _title.ForeColor = Theme.Text;
             _subtitle.Dock = DockStyle.Top; _subtitle.Height = 24; _subtitle.ForeColor = Theme.Muted;
-            _advice.Dock = DockStyle.Top; _advice.Height = 92;
+            _advice.Dock = DockStyle.Top; _advice.Height = 104;
             var gap1 = new Panel { Dock = DockStyle.Top, Height = 10 };
             _stats.Dock = DockStyle.Top; _stats.Height = 52;
             var help = new Label
@@ -163,7 +186,7 @@ namespace MozaHud
                 StageStore.EnsurePoints(r);
                 var a = r.Analyse();
                 dot = Theme.VerdictColor(a.Verdict);
-                if (a.ChangePct != 0) badge = (a.ChangePct > 0 ? "+" : "−") + Math.Abs(a.ChangePct) + " %";
+                if (a.ChangePct != 0) badge = "−" + Math.Abs(a.ChangePct) + " %";
                 else if (a.Verdict == Verdict.Good) badge = "OK";
             }
             var b0 = e.Bounds;
@@ -181,6 +204,19 @@ namespace MozaHud
                         g.DrawString(badge, BoldFont, bb, new RectangleF(b0.Right - 64, b0.Top + 7, 54, 20), rf);
             }
             using (var p = new Pen(Theme.Bg)) g.DrawLine(p, b0.Left, b0.Bottom - 1, b0.Right, b0.Bottom - 1);
+        }
+
+        void OnSettingsChanged()
+        {
+            if (IsDisposed) return;
+            _list.Invalidate();
+            ShowSelected(false);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) Settings.Changed -= OnSettingsChanged;
+            base.Dispose(disposing);
         }
 
         void DeleteSelected()
@@ -347,20 +383,24 @@ namespace MozaHud
                 g.FillPath(bg, path);
             using (var bar = new SolidBrush(c)) g.FillRectangle(bar, 0, 10, 4, Height - 20);
 
+            // The big number only when the gain should come down; green stays calm with at most a small hint.
             float rightW = 0;
-            string gainText = null, gainSub = null;
-            if (_a.SuggestedGain.HasValue && _run.Gain.HasValue) { gainText = _run.Gain + " → " + _a.SuggestedGain; gainSub = "suggested FFB gain"; }
-            else if (_a.ChangePct != 0) { gainText = (_a.ChangePct > 0 ? "+" : "−") + Math.Abs(_a.ChangePct) + " %"; gainSub = _run.Gain.HasValue ? "FFB strength (gain at maximum)" : "FFB gain"; }
-            else if (_run.Gain.HasValue && _a.Verdict == Verdict.Good) { gainText = _run.Gain.ToString(); gainSub = "keep this FFB gain"; }
-            if (gainText != null)
+            if (_a.ChangePct != 0)
             {
+                string gainText = _a.SuggestedGain.HasValue && _run.Gain.HasValue ? _run.Gain + " → " + _a.SuggestedGain : "−" + Math.Abs(_a.ChangePct) + " %";
+                string gainSub = _a.SuggestedGain.HasValue ? "suggested FFB gain" : "FFB gain";
                 rightW = Math.Max(g.MeasureString(gainText, Big).Width, g.MeasureString(gainSub, Small).Width) + 24;
-                using (var b = new SolidBrush(c)) g.DrawString(gainText, Big, b, Width - rightW, 14);
-                using (var b = new SolidBrush(Theme.Muted)) g.DrawString(gainSub, Small, b, Width - rightW + 2, 52);
+                using (var b = new SolidBrush(c)) g.DrawString(gainText, Big, b, Width - rightW, 18);
+                using (var b = new SolidBrush(Theme.Muted)) g.DrawString(gainSub, Small, b, Width - rightW + 2, 56);
             }
             using (var b = new SolidBrush(c)) g.DrawString(_a.Headline, Head, b, 18, 10);
+            float textW = Width - 36 - rightW;
+            float hintH = string.IsNullOrEmpty(_a.Hint) ? 0 : g.MeasureString(_a.Hint, Small, (int)textW).Height;
             using (var b = new SolidBrush(Theme.Muted))
-                g.DrawString(_a.Detail, Body, b, new RectangleF(18, 38, Width - 36 - rightW, Height - 42));
+                g.DrawString(_a.Detail, Body, b, new RectangleF(18, 38, textW, Height - 44 - hintH));
+            if (hintH > 0)
+                using (var b = new SolidBrush(Color.FromArgb(150, 205, 170)))
+                    g.DrawString("→ " + _a.Hint, Small, b, new RectangleF(18, Height - 8 - hintH, textW, hintH + 2));
         }
     }
 }
