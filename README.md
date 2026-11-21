@@ -54,6 +54,10 @@ automatically and shows, per stage:
   `RallyStyle.cs` / `BrandMark.cs`). The base's rotation setting is read from the base (e.g. 450°); the
   wheel position comes from the Windows joystick axis, which spans exactly that rotation (the game's steering
   value is identical). Within 3 % of full lock clipping is the soft lock pushing back and isn't counted.
+- **Key figures** (hover the ⓘ labels for an explanation): clipping %, **longest clip** (the longest single stretch at
+  the limit; 0.1–0.2 s is a bump or kerb, 0.5 s or more a whole part of a corner), **average clip** length with the
+  number of separate clipping moments (consecutive clipped 0.1 s steps count as one), average and strongest torque,
+  soft-lock time, temperatures, base, rotation and FFB gain.
 - **Temperature graph**: motor and MOSFET.
 - Scroll to zoom, drag to pan, double-click for the whole stage, hover for all values at that moment.
 

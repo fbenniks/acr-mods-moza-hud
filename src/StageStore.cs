@@ -59,6 +59,8 @@ namespace MozaHud
     public sealed class Analysis
     {
         public int DrivingPoints, ClipPoints, LockClipPoints, LockPoints;
+        public int ClipEpisodes;                 // separate clipping moments (consecutive clipped 0.1 s count as one)
+        public double LongestClipS, AvgClipS;    // longest / average clipping moment in seconds (0.1 s resolution)
         public double ClipPct, AllowedPct, P95Nm, P99RawNm, MaxSmoothNm, AvgNm, MaxMotor, MaxMosfet;
         public Verdict Verdict;
         public int ChangePct;          // recommended change (lower), in % of the current gain; 0 when green
@@ -75,18 +77,30 @@ namespace MozaHud
             var raw = new List<double>();
             double sum = 0;
             bool hasSpeed = run.Points.Any(p => p.Speed > 0);   // without speed data, all stage time counts
+            int streak = 0, longest = 0;
+            Action endStreak = () =>
+            {
+                if (streak == 0) return;
+                a.ClipEpisodes++;
+                longest = Math.Max(longest, streak);
+                streak = 0;
+            };
             foreach (var p in run.Points)
             {
                 if (p.TMot > a.MaxMotor) a.MaxMotor = p.TMot;
                 if (p.TMos > a.MaxMosfet) a.MaxMosfet = p.TMos;
-                if (p.Lock) { a.LockPoints++; if (p.Clip) a.LockClipPoints++; continue; }
-                if (hasSpeed && p.Speed < DrivingKmh) continue;
+                if (p.Lock) { a.LockPoints++; if (p.Clip) a.LockClipPoints++; endStreak(); continue; }
+                if (hasSpeed && p.Speed < DrivingKmh) { endStreak(); continue; }
                 a.DrivingPoints++;
-                if (p.Clip) a.ClipPoints++;
+                if (p.Clip) { a.ClipPoints++; streak++; } else endStreak();
                 double s = Math.Abs(p.Tq);
                 smooth.Add(s); raw.Add(p.TqMax); sum += s;
                 if (s > a.MaxSmoothNm) a.MaxSmoothNm = s;
             }
+            endStreak();
+            // one point = 0.1 s
+            a.LongestClipS = longest / 10.0;
+            a.AvgClipS = a.ClipEpisodes > 0 ? a.ClipPoints / 10.0 / a.ClipEpisodes : 0;
             if (a.DrivingPoints < 200)   // under 20 s of driving
             {
                 a.Verdict = Verdict.NotEnoughData;

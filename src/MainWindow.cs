@@ -341,10 +341,25 @@ namespace MozaHud
             UpdateApplyButton();
             _stats.Set(new[]
             {
-                new[] { "CLIPPING", a.ClipPct.ToString("0.0") + " %" },
-                new[] { "TORQUE AVG", a.AvgNm.ToString("0.0") + " Nm" },
-                new[] { "STRONGEST", a.P99RawNm.ToString("0.0") + " Nm" },
-                new[] { "SOFT LOCK", (a.LockPoints / 10.0).ToString("0.0") + " s" },
+                new[] { "CLIPPING", a.ClipPct.ToString("0.0") + " %",
+                    "Share of the driving time (over 5 km/h, soft lock not counted) in which the motor hit its torque limit.\n" +
+                    "Compared with your allowed clipping (" + a.AllowedPct.ToString("0.0") + " %) for the advice." },
+                new[] { "LONGEST CLIP", a.ClipEpisodes == 0 ? "—" : a.LongestClipS.ToString("0.0") + " s",
+                    "The longest single stretch the motor stayed at its limit without a break.\n" +
+                    "0.1–0.2 s: a bump, kerb or landing — you barely lose anything.\n" +
+                    "0.5 s or more: a whole part of a corner at the limit — the force stays flat there and you lose\n" +
+                    "the feel for grip. Long stretches matter more than many short taps.\n" +
+                    "Measured in steps of 0.1 s." },
+                new[] { "AVG CLIP", a.ClipEpisodes == 0 ? "—" : a.AvgClipS.ToString("0.00") + " s  ×" + a.ClipEpisodes,
+                    "How long a clipping moment lasts on average, and how many separate moments there were (×).\n" +
+                    "Consecutive clipped 0.1 s steps count as one moment.\n" +
+                    "Short average (around 0.1–0.2 s): mostly peaks from bumps and kerbs.\n" +
+                    "Long average: the base is at its limit through sustained cornering loads — lowering the gain helps most then." },
+                new[] { "TORQUE AVG", a.AvgNm.ToString("0.0") + " Nm", "Average force on the wheel while driving (smoothed torque)." },
+                new[] { "STRONGEST", a.P99RawNm.ToString("0.0") + " Nm",
+                    "The strongest moments: 99 % of the driving time the raw torque stayed below this." },
+                new[] { "SOFT LOCK", (a.LockPoints / 10.0).ToString("0.0") + " s",
+                    "Time with the wheel at the end of its rotation (soft lock). Clipping there is the lock pushing back, not FFB, and isn't counted." },
                 new[] { "MOTOR MAX", a.MaxMotor.ToString("0") + " °C" },
                 new[] { "MOSFET MAX", a.MaxMosfet.ToString("0") + " °C" },
                 new[] { "BASE", (string.IsNullOrEmpty(run.Base) ? "" : run.Base + " · ") + run.MaxNm.ToString("0.0") + " Nm" },
@@ -425,10 +440,16 @@ namespace MozaHud
         }
     }
 
-    /// <summary>A row of small "LABEL / value" tiles, spread over the width.</summary>
+    /// <summary>
+    /// A row of small "LABEL / value" tiles. Each item: label, value, optional hover explanation. Tiles are as wide as
+    /// their content, with the spare width spread between them.
+    /// </summary>
     sealed class StatTiles : Control
     {
         string[][] _items;
+        float[] _x = new float[0], _w = new float[0];
+        readonly ToolTip _tip = new ToolTip { AutoPopDelay = 20000, InitialDelay = 300, ReshowDelay = 100 };
+        int _tipIndex = -1;
         static readonly Font Lab = new Font("Segoe UI", 7.5f);
         static readonly Font Val = new Font("Segoe UI Semibold", 11.5f);
 
@@ -437,24 +458,54 @@ namespace MozaHud
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
         }
 
-        public void Set(string[][] items) { _items = items; Invalidate(); }
+        public void Set(string[][] items) { _items = items; _tipIndex = -1; _tip.SetToolTip(this, null); Invalidate(); }
+
+        void Layout(Graphics g)
+        {
+            int n = _items == null ? 0 : _items.Length;
+            _x = new float[n]; _w = new float[n];
+            float total = 0;
+            for (int i = 0; i < n; i++)
+            {
+                bool help = _items[i].Length > 2 && !string.IsNullOrEmpty(_items[i][2]);
+                _w[i] = Math.Max(g.MeasureString(_items[i][0] + (help ? " ⓘ" : ""), Lab).Width, g.MeasureString(_items[i][1], Val).Width) + 4;
+                total += _w[i];
+            }
+            float gap = n > 1 ? Math.Max(6, (Width - total) / (n - 1)) : 0;
+            float scale = total + gap * (n - 1) > Width ? (Width - gap * (n - 1)) / total : 1;
+            float x = 0;
+            for (int i = 0; i < n; i++) { _w[i] *= scale; _x[i] = x; x += _w[i] + gap; }
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
             g.Clear(Theme.Bg);
             if (_items == null || _items.Length == 0) return;
-            float w = Width / (float)_items.Length;
+            Layout(g);
             using (var lb = new SolidBrush(Theme.Faint))
             using (var vb = new SolidBrush(Theme.Text))
             using (var sf = new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap })
                 for (int i = 0; i < _items.Length; i++)
                 {
-                    float x = i * w;
-                    g.DrawString(_items[i][0], Lab, lb, new RectangleF(x, 10, w - 6, 14), sf);
-                    g.DrawString(_items[i][1], Val, vb, new RectangleF(x, 24, w - 6, 24), sf);
+                    bool help = _items[i].Length > 2 && !string.IsNullOrEmpty(_items[i][2]);
+                    g.DrawString(_items[i][0] + (help ? " ⓘ" : ""), Lab, lb, new RectangleF(_x[i], 10, _w[i], 14), sf);
+                    g.DrawString(_items[i][1], Val, vb, new RectangleF(_x[i], 24, _w[i], 24), sf);
                 }
         }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            int idx = -1;
+            for (int i = 0; i < _x.Length; i++) if (e.X >= _x[i] && e.X <= _x[i] + _w[i] + 6) { idx = i; break; }
+            if (idx == _tipIndex) return;
+            _tipIndex = idx;
+            string text = idx >= 0 && _items != null && idx < _items.Length && _items[idx].Length > 2 ? _items[idx][2] : null;
+            _tip.SetToolTip(this, text);
+        }
+
+        protected override void OnMouseLeave(EventArgs e) { base.OnMouseLeave(e); _tipIndex = -1; _tip.SetToolTip(this, null); }
     }
 
     /// <summary>The coloured advice panel: headline, explanation and the suggested gain.</summary>
