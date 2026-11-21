@@ -16,16 +16,38 @@ namespace MozaHud
     }
 
     /// <summary>
-    /// Reads the wheelbase temperatures over the MOZA serial protocol (as documented by boxflat, data/serial.yml).
+    /// Talks to a MOZA base over its USB serial port using the MOZA serial protocol (documented by boxflat,
+    /// data/serial.yml; the newer command names come from the database embedded in Pit House's FirmwareManager.exe).
     /// Request frame: 7E, payload length, read group, device id, command id, payload..., checksum.
-    /// Checksum = (13 + sum of all previous bytes) % 256.
-    /// Temperatures: group 43, base device 19, ids 4 (MCU) 5 (MOSFET) 6 (motor), 2-byte big-endian value in 1/100 °C.
-    /// The reply has bit 7 set in the group (43 -> 0xAB) and the device id nibbles swapped (0x13 -> 0x31).
+    /// Checksum = (13 + sum of all previous bytes) % 256. Replies have bit 7 set in the group (43 -> 0xAB) and the
+    /// device id nibbles swapped (base 0x13 -> 0x31). The base also sends debug text frames (group 0x0E); skipped.
+    ///
+    /// Reads used (group 43, base device 19, 2-byte big-endian reply):
+    ///   4 MCU temp, 5 MOSFET temp, 6 motor temp  (1/100 °C)
+    ///   7 MotTorque: live force-feedback torque, 500 = no force, 1 step = 0.1 Nm (R5: clips at 445 / 554 = ±5.5 Nm)
     /// </summary>
-    public static class MozaBase
+    public sealed class MozaLink : IDisposable
     {
         const byte Start = 0x7E, Magic = 13, ReadGroup = 43, BaseId = 19;
-        const byte IdMcu = 4, IdMosfet = 5, IdMotor = 6;
+        public const byte IdMcu = 4, IdMosfet = 5, IdMotor = 6, IdTorque = 7;
+        public const int TorqueZero = 500;
+
+        readonly SerialPort _sp;
+        readonly List<byte> _buf = new List<byte>();
+        readonly byte[] _chunk = new byte[1024];
+
+        /// <summary>Called for each value reply: command id, raw signed 16-bit value.</summary>
+        public Action<byte, int> OnValue;
+
+        public string Port { get; private set; }
+
+        /// <summary>Opens the port. Throws UnauthorizedAccessException when another program (Pit House) has it.</summary>
+        public MozaLink(string port)
+        {
+            Port = port;
+            _sp = new SerialPort(port, 115200) { ReadTimeout = 5, WriteTimeout = 500, DtrEnable = true };
+            _sp.Open();
+        }
 
         /// <summary>Finds the COM port of a MOZA device (USB vendor id 346E), or null.</summary>
         public static string FindPort()
@@ -55,67 +77,125 @@ namespace MozaHud
             return b;
         }
 
-        /// <summary>
-        /// Opens the port, asks for the three temperatures and closes it again, so Pit House can still use the port
-        /// in between. Throws UnauthorizedAccessException when another program (Pit House) holds the port.
-        /// Returns null when the base did not answer.
-        /// </summary>
-        public static Temperatures Read(string port)
+        static readonly Dictionary<byte, byte[]> Frames = new Dictionary<byte, byte[]>
         {
-            using (var sp = new SerialPort(port, 115200))
+            { IdMcu, Frame(IdMcu) }, { IdMosfet, Frame(IdMosfet) }, { IdMotor, Frame(IdMotor) }, { IdTorque, Frame(IdTorque) },
+        };
+
+        public void Request(byte id)
+        {
+            var f = Frames[id];
+            _sp.Write(f, 0, f.Length);
+        }
+
+        /// <summary>Reads whatever arrives for up to <paramref name="ms"/> milliseconds and reports complete replies.</summary>
+        public void Pump(int ms)
+        {
+            var until = DateTime.UtcNow.AddMilliseconds(ms);
+            do
             {
-                sp.ReadTimeout = 100;
-                sp.WriteTimeout = 500;
-                sp.DtrEnable = true;
-                sp.Open();
+                int n;
+                try { n = _sp.Read(_chunk, 0, _chunk.Length); }
+                catch (TimeoutException) { continue; }
+                for (int i = 0; i < n; i++) _buf.Add(_chunk[i]);
+                Parse();
+            } while (DateTime.UtcNow < until);
+        }
 
-                foreach (var id in new[] { IdMcu, IdMosfet, IdMotor })
+        // Frames: 7E, len, group, device, payload(len), checksum.
+        void Parse()
+        {
+            int i = 0;
+            while (i < _buf.Count)
+            {
+                if (_buf[i] != Start) { i++; continue; }
+                if (i + 1 >= _buf.Count) break;
+                int total = _buf[i + 1] + 5;
+                if (i + total > _buf.Count) break;   // wait for the rest
+                if (_buf[i + 1] == 3 && _buf[i + 2] == (ReadGroup | 0x80) && _buf[i + 3] == 0x31 && OnValue != null)
                 {
-                    var f = Frame(id);
-                    sp.Write(f, 0, f.Length);
+                    int raw = (_buf[i + 5] << 8) | _buf[i + 6];
+                    if (raw >= 32768) raw -= 65536;
+                    OnValue(_buf[i + 4], raw);
                 }
+                i += total;
+            }
+            _buf.RemoveRange(0, Math.Min(i, _buf.Count));
+        }
 
+        public void Dispose()
+        {
+            try { _sp.Close(); } catch { }
+            _sp.Dispose();
+        }
+
+        /// <summary>One-shot read of the temperatures (for --probe).</summary>
+        public static Temperatures ReadTemperatures(string port)
+        {
+            using (var link = new MozaLink(port))
+            {
                 var got = new Dictionary<byte, double>();
-                var buf = new List<byte>();
-                var chunk = new byte[512];
-                var until = DateTime.UtcNow.AddMilliseconds(800);
-                while (got.Count < 3 && DateTime.UtcNow < until)
-                {
-                    int n;
-                    try { n = sp.Read(chunk, 0, chunk.Length); }
-                    catch (TimeoutException) { continue; }
-                    for (int i = 0; i < n; i++) buf.Add(chunk[i]);
-                    Parse(buf, got);
-                }
-
+                link.OnValue = (id, raw) => { if (id >= IdMcu && id <= IdMotor) got[id] = raw / 100.0; };
+                link.Request(IdMcu); link.Request(IdMosfet); link.Request(IdMotor);
+                for (int i = 0; i < 8 && got.Count < 3; i++) link.Pump(100);
                 if (got.Count < 3) return null;
                 return new Temperatures { Mcu = got[IdMcu], Mosfet = got[IdMosfet], Motor = got[IdMotor] };
             }
         }
+    }
 
-        // Frames: 7E, len, group, device, id, value..., checksum. The base also sends debug log text frames
-        // (group 0x0E) on this port; those are skipped by their length/group.
-        static void Parse(List<byte> buf, Dictionary<byte, double> got)
+    /// <summary>
+    /// Rolling one-second window of torque samples. Afterburner reads a counter about once a second, so the overlay
+    /// shows the peak and average of the last second instead of a random instant.
+    /// </summary>
+    public sealed class TorqueWindow
+    {
+        /// <summary>Peak torque of the base. R5 = 5.5 Nm. Samples at (or within 0.15 Nm of) it count as clipping.</summary>
+        public double MaxNm = 5.5;
+        const double ClipMargin = 0.15;
+
+        readonly Queue<KeyValuePair<long, double>> _q = new Queue<KeyValuePair<long, double>>();
+
+        public void Add(long ms, int raw)
         {
-            int i = 0;
-            while (i < buf.Count)
+            _q.Enqueue(new KeyValuePair<long, double>(ms, (raw - MozaLink.TorqueZero) / 10.0));
+        }
+
+        public void Trim(long nowMs, long windowMs = 1000)
+        {
+            while (_q.Count > 0 && _q.Peek().Key < nowMs - windowMs) _q.Dequeue();
+        }
+
+        public int Count { get { return _q.Count; } }
+
+        public TorqueStats Stats()
+        {
+            var s = new TorqueStats();
+            if (_q.Count == 0) return s;
+            double sum = 0; int clipped = 0;
+            foreach (var kv in _q)
             {
-                if (buf[i] != Start) { i++; continue; }
-                if (i + 1 >= buf.Count) break;
-                int len = buf[i + 1];
-                int total = len + 5;               // start, len, group, device, payload(len), checksum
-                if (i + total > buf.Count) break;  // wait for the rest
-                if (len == 3 && buf[i + 2] == (ReadGroup | 0x80) && buf[i + 3] == 0x31)
-                {
-                    byte id = buf[i + 4];
-                    int raw = (buf[i + 5] << 8) | buf[i + 6];
-                    double c = raw / 100.0;
-                    if ((id == IdMcu || id == IdMosfet || id == IdMotor) && c > -40 && c < 200)
-                        got[id] = c;
-                }
-                i += total;
+                double a = Math.Abs(kv.Value);
+                if (a > s.PeakNm) s.PeakNm = a;
+                sum += a;
+                if (a >= MaxNm - ClipMargin) clipped++;
             }
-            buf.RemoveRange(0, Math.Min(i, buf.Count));
+            s.AvgNm = sum / _q.Count;
+            s.LoadPct = Math.Min(100, s.PeakNm / MaxNm * 100);
+            s.ClipPct = 100.0 * clipped / _q.Count;
+            s.Valid = true;
+            return s;
+        }
+    }
+
+    public struct TorqueStats
+    {
+        public bool Valid;
+        public double PeakNm, AvgNm, LoadPct, ClipPct;
+        public override string ToString()
+        {
+            return Valid ? string.Format("Torque peak {0:0.0} Nm · avg {1:0.0} Nm · clipping {2:0} %", PeakNm, AvgNm, ClipPct)
+                         : "Torque —";
         }
     }
 }

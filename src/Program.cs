@@ -30,20 +30,29 @@ namespace MozaHud
             // Read once and print (for testing from a shell: MozaHud.exe --probe | more).
             if (arg == "--probe")
             {
-                var port = MozaBase.FindPort();
+                var port = MozaLink.FindPort();
                 Console.WriteLine("Port: " + (port ?? "not found"));
                 if (port != null)
                 {
                     try
                     {
-                        var t = MozaBase.Read(port);
+                        var t = MozaLink.ReadTemperatures(port);
                         Console.WriteLine(t == null ? "No answer" : t.ToString());
+
+                        // one second of torque samples
+                        var win = new TorqueWindow();
+                        var clock = System.Diagnostics.Stopwatch.StartNew();
+                        using (var link = new MozaLink(port))
+                        {
+                            link.OnValue = (id, raw) => { if (id == MozaLink.IdTorque) win.Add(clock.ElapsedMilliseconds, raw); };
+                            while (clock.ElapsedMilliseconds < 1000) { link.Request(MozaLink.IdTorque); link.Pump(25); }
+                        }
+                        Console.WriteLine(win.Stats() + "  (" + win.Count + " samples in 1 s)");
                     }
                     catch (Exception ex) { Console.WriteLine("Error: " + ex.GetType().Name + ": " + ex.Message); }
                 }
-                Console.WriteLine("Counters registered: " + Counters.Registered());
                 Console.WriteLine("Afterburner cfg: " + (AfterburnerSetup.CfgPath() ?? "not found") +
-                                  (AfterburnerSetup.CfgHasSources() ? " (has MOZA sources)" : ""));
+                                  (AfterburnerSetup.CfgHasSources() ? " (has MOZA sources)" : " (no MOZA sources yet)"));
                 return 0;
             }
 
@@ -57,6 +66,11 @@ namespace MozaHud
                 }
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
+                // A UI glitch must not take the tray app (and the overlay values) down.
+                Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+                Application.ThreadException += (s, e) => Log.Write("UI error: " + e.Exception);
+                AppDomain.CurrentDomain.UnhandledException += (s, e) => Log.Write("Fatal: " + e.ExceptionObject);
+                Log.Start();
                 Application.Run(new TrayApp());
             }
             return 0;
