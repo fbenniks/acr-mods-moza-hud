@@ -185,6 +185,7 @@ namespace MozaHud
             {
                 if (!string.IsNullOrEmpty(info.Stage)) _run.Stage = info.Stage;
                 if (!string.IsNullOrEmpty(info.Car)) _run.Car = info.Car;
+                if (!string.IsNullOrEmpty(info.StageId)) _run.StageId = info.StageId;
                 _run.Gain = info.Gain;
                 _run.GainSource = info.Source ?? "";
             }

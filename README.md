@@ -54,6 +54,12 @@ automatically and shows, per stage:
 - **Temperature graph**: motor and MOSFET.
 - Scroll to zoom, drag to pan, double-click for the whole stage, hover for all values at that moment.
 
+**Apply in StageSwitch…**: when AC Rally StageSwitch is running and a stage has a suggested gain, the advice box has
+this button. It asks StageSwitch (local named pipe `ACRallyStageSwitch`) for the current values and opens a dialog
+with four choices: this car on this stage, this car on all the rally's stages, this stage for all cars, or all the
+rally's stages for all cars (the gain can still be adjusted). StageSwitch saves it and applies it at once when you're
+on that stage. New runs store StageSwitch's ids (`stage_id: MonteCarlo/Sisteron`); older runs use the stage title.
+
 Stage name, car and FFB gain come from AC Rally StageSwitch's log ("Applied FFB gain 150 for Monte-Carlo · Sisteron
 · Hyundai i20N Rally2"), otherwise from the game's save file.
 

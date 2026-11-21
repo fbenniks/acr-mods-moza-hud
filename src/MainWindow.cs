@@ -106,6 +106,7 @@ namespace MozaHud
             _title.Dock = DockStyle.Top; _title.Height = 32; _title.Font = TitleFont; _title.ForeColor = Theme.Text;
             _subtitle.Dock = DockStyle.Top; _subtitle.Height = 24; _subtitle.ForeColor = Theme.Muted;
             _advice.Dock = DockStyle.Top; _advice.Height = 104;
+            _advice.ApplyClicked += ApplyInStageSwitch;
             var gap1 = new Panel { Dock = DockStyle.Top, Height = 10 };
             _stats.Dock = DockStyle.Top; _stats.Height = 52;
             var help = new Label
@@ -206,6 +207,55 @@ namespace MozaHud
             using (var p = new Pen(Theme.Bg)) g.DrawLine(p, b0.Left, b0.Bottom - 1, b0.Right, b0.Bottom - 1);
         }
 
+        // ---------------- StageSwitch ----------------
+
+        bool _stageSwitchRunning;
+
+        void UpdateApplyButton()
+        {
+            var run = _shown;
+            string r, s;
+            bool on = _stageSwitchRunning && run != null && run.Analyse().SuggestedGain.HasValue && StageSwitchLink.Keys(run, out r, out s);
+            _advice.SetApplyVisible(on);
+        }
+
+        void ApplyInStageSwitch()
+        {
+            var run = _shown;
+            if (run == null) return;
+            var a = run.Analyse();
+            if (!a.SuggestedGain.HasValue) return;
+            string rally, stage;
+            if (!StageSwitchLink.Keys(run, out rally, out stage))
+            {
+                MessageBox.Show(this, "MozaHud doesn't know which StageSwitch stage this run was on.", "MozaHud", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            StageSwitchLink.Current now;
+            try { now = StageSwitchLink.Get(rally, stage, run.Car); }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "StageSwitch: " + ex.Message, "MozaHud", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            string why = string.Format("MozaHud suggests {0} (was {1}): clipping {2:0.0} % against your allowed {3:0.0} %.",
+                a.SuggestedGain.Value, run.Gain, a.ClipPct, a.AllowedPct);
+            using (var dlg = new ApplyGainDialog(now, run.Car, a.SuggestedGain.Value, why, Icon))
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                try
+                {
+                    var msg = StageSwitchLink.SetGain(dlg.Scope, rally, stage, run.Car, dlg.Gain);
+                    Log.Write("StageSwitch: " + msg);
+                    MessageBox.Show(this, msg, "Saved in StageSwitch", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "StageSwitch: " + ex.Message, "MozaHud", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+
         void OnSettingsChanged()
         {
             if (IsDisposed) return;
@@ -274,6 +324,7 @@ namespace MozaHud
                     : "not finished (" + run.EndReason + ")");
             _subtitle.Text = string.Join("   ·   ", sub);
             _advice.Set(run, a);
+            UpdateApplyButton();
             _stats.Set(new[]
             {
                 new[] { "CLIPPING", a.ClipPct.ToString("0.0") + " %" },
@@ -293,6 +344,8 @@ namespace MozaHud
         {
             var lines = _baseStatus();
             _status.Text = _recorder.Status ?? "";
+            bool ss = StageSwitchLink.IsRunning();
+            if (ss != _stageSwitchRunning) { _stageSwitchRunning = ss; UpdateApplyButton(); }
             _base.Text = lines == null ? "" : string.Join("     ", lines.Where(l => !string.IsNullOrEmpty(l)));
 
             bool liveNow = _recorder.Live != null;
@@ -364,12 +417,28 @@ namespace MozaHud
         static readonly Font Big = new Font("Segoe UI Semibold", 20f);
         static readonly Font Small = new Font("Segoe UI", 8.5f);
 
+        readonly Button _apply = new Button
+        {
+            Text = "Apply in StageSwitch…", FlatStyle = FlatStyle.Flat, BackColor = Theme.PanelAlt, ForeColor = Theme.Text,
+            Font = new Font("Segoe UI", 8.5f), Size = new Size(150, 24), Visible = false, Cursor = Cursors.Hand,
+        };
+
+        /// <summary>The "Apply in StageSwitch…" button was clicked.</summary>
+        public event Action ApplyClicked;
+
         public AdviceBox()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            _apply.FlatAppearance.BorderColor = Theme.Border;
+            _apply.Click += (s, e) => { var h = ApplyClicked; if (h != null) h(); };
+            Controls.Add(_apply);
+            Resize += (s, e) => _apply.Location = new Point(Width - _apply.Width - 14, Height - _apply.Height - 10);
         }
 
         public void Set(StageRun run, Analysis a) { _run = run; _a = a; Invalidate(); }
+
+        /// <summary>Shown when StageSwitch runs and there is a gain to apply.</summary>
+        public void SetApplyVisible(bool on) { if (_apply.Visible != on) { _apply.Visible = on; Invalidate(); } }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -390,9 +459,11 @@ namespace MozaHud
             {
                 string gainText = _a.SuggestedGain.HasValue && _run.Gain.HasValue ? _run.Gain + " → " + _a.SuggestedGain : "−" + Math.Abs(_a.ChangePct) + " %";
                 string gainSub = _a.SuggestedGain.HasValue ? "suggested FFB gain" : "FFB gain";
-                rightW = Math.Max(g.MeasureString(gainText, Big).Width, g.MeasureString(gainSub, Small).Width) + 24;
-                using (var b = new SolidBrush(c)) g.DrawString(gainText, Big, b, Width - rightW, 18);
-                using (var b = new SolidBrush(Theme.Muted)) g.DrawString(gainSub, Small, b, Width - rightW + 2, 56);
+                rightW = Math.Max(Math.Max(g.MeasureString(gainText, Big).Width, g.MeasureString(gainSub, Small).Width) + 24,
+                                  _apply.Visible ? _apply.Width + 28 : 0);
+                float top = _apply.Visible ? 6 : 18;
+                using (var b = new SolidBrush(c)) g.DrawString(gainText, Big, b, Width - rightW, top);
+                using (var b = new SolidBrush(Theme.Muted)) g.DrawString(gainSub, Small, b, Width - rightW + 2, top + 38);
             }
             using (var b = new SolidBrush(c)) g.DrawString(_a.Headline, Head, b, 18, 10);
             float textW = Width - 36 - rightW;

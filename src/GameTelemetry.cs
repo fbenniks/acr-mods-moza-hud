@@ -142,7 +142,9 @@ namespace MozaHud
 
         // ---------------- which stage, which gain ----------------
 
-        public sealed class StageInfo { public string Stage, Car, Source; public int? Gain; }
+        public sealed class StageInfo { public string Stage, Car, Source, StageId; public int? Gain; }
+
+        static readonly Regex StageSwitchLoaded = new Regex(@"Stage loaded: .* -> ([^/\s]+/[^/\s]+)\s*$");
 
         static readonly Regex StageSwitchApplied = new Regex(
             @"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\s+Applied FFB gain (\d+) for (.+?)\s*$");
@@ -191,6 +193,12 @@ namespace MozaHud
                     var info = new StageInfo { Gain = int.Parse(m.Groups[2].Value), Source = "StageSwitch" };
                     if (parts.Length >= 3) { info.Stage = parts[0] + " · " + parts[1]; info.Car = string.Join(" · ", parts, 2, parts.Length - 2); }
                     else info.Stage = string.Join(" · ", parts);
+                    // StageSwitch's own ids, from "Stage loaded: '…' car '…' -> MonteCarlo/Sisteron" just before
+                    for (int j = i; j >= Math.Max(0, i - 12); j--)
+                    {
+                        var sl = StageSwitchLoaded.Match(lines[j]);
+                        if (sl.Success) { info.StageId = sl.Groups[1].Value; break; }
+                    }
                     return info;
                 }
             }

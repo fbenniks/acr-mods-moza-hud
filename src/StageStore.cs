@@ -25,6 +25,7 @@ namespace MozaHud
         public string FilePath;
         public DateTime Start, End;
         public string Track = "", Stage = "", Car = "", GainSource = "", EndReason = "", StageTime = "", Base = "";
+        public string StageId = "";   // StageSwitch's "Rally/Stage" ids, e.g. "MonteCarlo/Sisteron"
         public int? Gain;
         public int RotationDeg;
         public double MaxNm = 5.5;
@@ -183,6 +184,7 @@ namespace MozaHud
             sb.Append("# end_reason: ").Append(run.EndReason).Append('\n');
             sb.Append("# stage_time: ").Append(run.StageTime).Append('\n');
             sb.Append("# base: ").Append(run.Base).Append('\n');
+            sb.Append("# stage_id: ").Append(run.StageId).Append('\n');
             sb.Append("t,tq,tqmax,clip,lock,wheel,speed,tmot,tmos\n");
             foreach (var p in run.Points)
             {
@@ -241,6 +243,7 @@ namespace MozaHud
                             case "end_reason": run.EndReason = val; break;
                             case "stage_time": run.StageTime = val; break;
                             case "base": run.Base = val; break;
+                            case "stage_id": run.StageId = val; break;
                         }
                         continue;
                     }
