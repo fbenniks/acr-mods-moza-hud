@@ -50,18 +50,20 @@ namespace MozaHud
             _status.SetBounds(140, 10, 600, 20); _status.ForeColor = Theme.Text; _status.Font = BoldFont;
             _base.SetBounds(140, 31, 900, 18); _base.ForeColor = Theme.Muted; _base.Font = SmallFont;
             _status.Anchor = _base.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
-            // allowed clipping setting, top right
-            var allowLabel = new Label { Text = "Allowed clipping", AutoSize = true, ForeColor = Theme.Muted, Font = SmallFont };
+            // target clipping setting, top right
+            var allowLabel = new Label { Text = "Target clipping", AutoSize = true, ForeColor = Theme.Muted, Font = SmallFont };
             var allow = new NumericUpDown
             {
                 DecimalPlaces = 1, Increment = 0.1m, Minimum = 0, Maximum = 50, Width = 58,
-                Value = (decimal)Settings.AllowedClipPct, BackColor = Theme.PanelAlt, ForeColor = Theme.Text,
+                Value = (decimal)Settings.TargetClipPct, BackColor = Theme.PanelAlt, ForeColor = Theme.Text,
                 BorderStyle = BorderStyle.FixedSingle, TextAlign = HorizontalAlignment.Right, Font = BoldFont,
             };
             var pct = new Label { Text = "%", AutoSize = true, ForeColor = Theme.Muted, Font = BoldFont };
-            allow.ValueChanged += (s, e) => Settings.SetAllowedClipPct((double)allow.Value);
+            allow.ValueChanged += (s, e) => Settings.SetTargetClipPct((double)allow.Value);
             var tip = new ToolTip();
-            const string tipText = "Share of the driving time the motor may be at its limit (clipping) before MozaHud recommends a lower FFB gain.";
+            const string tipText = "How much of the driving time the motor should be at its limit (clipping).\n" +
+                "Above it MozaHud suggests less FFB gain; under 60 % of it (1.5 % for 2.5 %) more gain,\n" +
+                "so you don't leave feel on the table. Green in between.";
             tip.SetToolTip(allow, tipText); tip.SetToolTip(allowLabel, tipText);
             Action placeAllow = () =>
             {
@@ -186,7 +188,7 @@ namespace MozaHud
                 StageStore.EnsurePoints(r);
                 var a = r.Analyse();
                 dot = Theme.VerdictColor(a.Verdict);
-                if (a.ChangePct != 0) badge = "−" + Math.Abs(a.ChangePct) + " %";
+                if (a.ChangePct != 0) badge = (a.ChangePct > 0 ? "+" : "−") + Math.Abs(a.ChangePct) + " %";
                 else if (a.Verdict == Verdict.Good) badge = "OK";
             }
             var b0 = e.Bounds;
@@ -252,8 +254,8 @@ namespace MozaHud
                 MessageBox.Show(this, "StageSwitch: " + ex.Message, "MozaHud", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
-            string why = string.Format("MozaHud suggests {0} (was {1}): clipping {2:0.0} % against your allowed {3:0.0} %.",
-                a.SuggestedGain.Value, run.Gain, a.ClipPct, a.AllowedPct);
+            string why = string.Format("Suggested {0} (was {1}): clipping {2:0.0} % → about {3:0.0} % (target {4:0.0} %).",
+                a.SuggestedGain.Value, run.Gain, a.ClipPct, a.PredictedPct, a.TargetPct);
             using (var dlg = new ApplyGainDialog(now, run.Car, a.SuggestedGain.Value, why, Icon))
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
@@ -343,7 +345,7 @@ namespace MozaHud
             {
                 new[] { "CLIPPING", a.ClipPct.ToString("0.0") + " %",
                     "Share of the driving time (over 5 km/h, soft lock not counted) in which the motor hit its torque limit.\n" +
-                    "Compared with your allowed clipping (" + a.AllowedPct.ToString("0.0") + " %) for the advice." },
+                    "Compared with your target zone (" + a.ZoneLowPct.ToString("0.0") + "–" + a.TargetPct.ToString("0.0") + " %) for the advice." },
                 new[] { "LONGEST CLIP", a.ClipEpisodes == 0 ? "—" : a.LongestClipS.ToString("0.0") + " s",
                     "The longest single stretch the motor stayed at its limit without a break.\n" +
                     "0.1–0.2 s: a bump, kerb or landing — you barely lose anything.\n" +
@@ -553,11 +555,12 @@ namespace MozaHud
                 g.FillPath(bg, path);
             using (var bar = new SolidBrush(c)) g.FillRectangle(bar, 0, 10, 4, Height - 20);
 
-            // The big number only when the gain should come down; green stays calm with at most a small hint.
+            // The big number only when the gain should change; green stays calm with at most a small hint.
             float rightW = 0;
             if (_a.ChangePct != 0)
             {
-                string gainText = _a.SuggestedGain.HasValue && _run.Gain.HasValue ? _run.Gain + " → " + _a.SuggestedGain : "−" + Math.Abs(_a.ChangePct) + " %";
+                string gainText = _a.SuggestedGain.HasValue && _run.Gain.HasValue ? _run.Gain + " → " + _a.SuggestedGain
+                    : (_a.ChangePct > 0 ? "+" : "−") + Math.Abs(_a.ChangePct) + " %";
                 string gainSub = _a.SuggestedGain.HasValue ? "suggested FFB gain" : "FFB gain";
                 rightW = Math.Max(Math.Max(g.MeasureString(gainText, Big).Width, g.MeasureString(gainSub, Small).Width) + 24,
                                   _apply.Visible ? _apply.Width + 28 : 0);

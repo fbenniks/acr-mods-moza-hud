@@ -42,12 +42,15 @@ Red means the motor was at its limit too often and you should lower the gain —
 
 ![Too strong: lower the FFB gain, 150 → 135](docs/images/advice-too-strong.png)
 
-Green means you're good. It also tells you how close you are, or whether there's room to go stronger.
+Green means you're good. Blue means the opposite of red: the motor hardly reached its limit, so you're leaving feel on
+the table, and MozaHud suggests a higher gain. It works out the exact value (in steps of 1) from the torque of that
+run, so the next run lands just under your target.
 
 ![Good: the FFB gain fits this stage](docs/images/advice-good.png)
 
-How strict it is, is up to you: **Allowed clipping** (top right) sets how much clipping is fine — 2.5 % of the
-driving time by default. A few short taps on kerbs and bumps are harmless; long stretches through corners are not.
+The target is up to you: **Target clipping** (top right) sets how much clipping you want — 2.5 % of the driving time
+by default, with green from 1.5 % up to it. A few short taps on kerbs and bumps are harmless; long stretches through
+corners are not.
 
 ![Header with live values and the Allowed clipping setting](docs/images/header.png)
 

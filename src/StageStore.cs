@@ -38,43 +38,77 @@ namespace MozaHud
         Analysis _analysis;
         double _analysedFor = -1;
 
-        /// <summary>The analysis against the current allowed-clipping setting (recomputed when it changes).</summary>
+        /// <summary>The analysis against the current target-clipping setting (recomputed when it changes).</summary>
         public Analysis Analyse()
         {
-            double allowed = Settings.AllowedClipPct;
-            if (_analysis == null || _analysedFor != allowed) { _analysis = Analysis.Of(this, allowed); _analysedFor = allowed; }
+            double target = Settings.TargetClipPct;
+            if (_analysis == null || _analysedFor != target) { _analysis = Analysis.Of(this, target); _analysedFor = target; }
             return _analysis;
         }
 
         public void Invalidate() { _analysis = null; }
     }
 
-    public enum Verdict { NotEnoughData, Lower, SlightlyLower, Good }
+    public enum Verdict { NotEnoughData, Lower, SlightlyLower, Good, Raise }
 
     /// <summary>
     /// FFB gain advice from a stage run. Only points while driving (over 5 km/h) and not at the soft lock count.
-    /// Clipping above the allowed share (setting, default 2.5 %) → lower the gain, more the further above;
-    /// at or below it → good (green), with at most a small hint (room to raise, or close to the limit).
+    /// The clipping setting is a target with a green zone below it (from 60 % of the target up to the target):
+    /// above the target → lower the gain; below the zone → raise it, so no feel is left on the table.
+    /// The suggested gain (in steps of 1) is the highest whose predicted clipping stays a little under the target.
+    /// Prediction: the run's raw torque peaks scaled by new gain / old gain (AC Rally's FFB scales linearly with the
+    /// gain; checked on runs of the same stage at two gains). Going up this is exact for every peak below the limit;
+    /// going down, how far the clipped peaks went past the limit is estimated from how fast the peaks just below it thin out.
     /// </summary>
     public sealed class Analysis
     {
         public int DrivingPoints, ClipPoints, LockClipPoints, LockPoints;
         public int ClipEpisodes;                 // separate clipping moments (consecutive clipped 0.1 s count as one)
         public double LongestClipS, AvgClipS;    // longest / average clipping moment in seconds (0.1 s resolution)
-        public double ClipPct, AllowedPct, P95Nm, P99RawNm, MaxSmoothNm, AvgNm, MaxMotor, MaxMosfet;
+        public double ClipPct, TargetPct, ZoneLowPct, P95Nm, P99RawNm, MaxSmoothNm, AvgNm, MaxMotor, MaxMosfet;
         public Verdict Verdict;
-        public int ChangePct;          // recommended change (lower), in % of the current gain; 0 when green
+        public int ChangePct;          // recommended change in % of the current gain (negative = lower); 0 = keep
         public int? SuggestedGain;
+        public double PredictedPct;    // expected clipping after the recommended change
+        public bool Capped;            // the change was limited to MaxRaisePct / MaxLowerPct
         public string Headline = "", Detail = "";
-        public string Hint = "";       // small optional recommendation when green
+        public string Hint = "";       // small optional note
 
         const double DrivingKmh = 5;
+        public const double ZoneFraction = 0.6;   // green from 60 % of the target up to the target
+        public const double AimMargin = 0.3;      // suggestions aim this many points under the target
+        public const int MaxRaisePct = 15;        // per recommendation: one careful run shouldn't cause a big jump
+        public const int MaxLowerPct = 25;
+        public const int MaxGain = 200;           // AC Rally's FFB gain range is 0–200
+        const int RaiseMinPoints = 600;           // 60 s of driving before suggesting more gain
+        const double ClipMarginNm = 0.15;         // as TorqueWindow: within this of the limit counts as clipping
+        const double TailFitNm = 1.0;             // peaks this far below the limit set the estimated tail
 
-        public static Analysis Of(StageRun run, double allowed)
+        float[] _peaks;            // raw peak of every driving 0.1 s that did not clip
+        double _clipNm, _tailRate;
+
+        /// <summary>Expected clipping (% of the driving time) with the gain multiplied by k.</summary>
+        public double Predict(double k)
         {
-            var a = new Analysis { AllowedPct = allowed };
+            if (DrivingPoints == 0 || k <= 0) return 0;
+            if (k >= 1)
+            {
+                // everything that clipped still clips; a peak below the limit clips once peak × k reaches it
+                double thr = _clipNm / k;
+                int n = ClipPoints;
+                foreach (var p in _peaks) if (p >= thr) n++;
+                return 100.0 * n / DrivingPoints;
+            }
+            // lower: only clipped moments can still clip, the ones that went past the limit by 1/k or more
+            return ClipPct * Math.Exp(-_tailRate * (_clipNm / k - _clipNm));
+        }
+
+        public static Analysis Of(StageRun run, double target)
+        {
+            var a = new Analysis { TargetPct = target, ZoneLowPct = Math.Round(target * ZoneFraction, 1) };
             var smooth = new List<double>();
             var raw = new List<double>();
+            var peaks = new List<float>();
             double sum = 0;
             bool hasSpeed = run.Points.Any(p => p.Speed > 0);   // without speed data, all stage time counts
             int streak = 0, longest = 0;
@@ -92,7 +126,7 @@ namespace MozaHud
                 if (p.Lock) { a.LockPoints++; if (p.Clip) a.LockClipPoints++; endStreak(); continue; }
                 if (hasSpeed && p.Speed < DrivingKmh) { endStreak(); continue; }
                 a.DrivingPoints++;
-                if (p.Clip) { a.ClipPoints++; streak++; } else endStreak();
+                if (p.Clip) { a.ClipPoints++; streak++; } else { endStreak(); peaks.Add(p.TqMax); }
                 double s = Math.Abs(p.Tq);
                 smooth.Add(s); raw.Add(p.TqMax); sum += s;
                 if (s > a.MaxSmoothNm) a.MaxSmoothNm = s;
@@ -114,59 +148,101 @@ namespace MozaHud
             a.AvgNm = sum / a.DrivingPoints;
             a.ClipPct = 100.0 * a.ClipPoints / a.DrivingPoints;
 
-            double max = run.MaxNm;
-            double excess = a.ClipPct - allowed;
-            int? gain = run.Gain;
-            if (excess > 0.0001)
+            // prediction inputs
+            a._peaks = peaks.ToArray();
+            a._clipNm = run.MaxNm - ClipMarginNm;
+            int nearLimit = a.ClipPoints + peaks.Count(p => p >= a._clipNm - TailFitNm);
+            a._tailRate = a.ClipPoints > 0 ? Math.Max(0.5, Math.Log((double)nearLimit / a.ClipPoints) / TailFitNm) : 0;
+
+            // Search in steps of 1. Without a known gain, work on a base of 100 and only give the change in %.
+            int? gain = run.Gain.HasValue && run.Gain.Value > 0 ? run.Gain : null;
+            int baseGain = gain ?? 100;
+            double aim = Math.Max(a.ZoneLowPct, target - AimMargin);
+            string zone = string.Format("{0:0.0}–{1:0.0} %", a.ZoneLowPct, target);
+
+            if (a.ClipPct > target + 0.0001)
             {
-                // the further above the allowed share, the bigger the step: 0.6 points over → −5 %, 2.9 over → −10 %
-                a.ChangePct = -Math.Min(30, Math.Max(5, Round5(excess * 2 + 5)));
+                double excess = a.ClipPct - target;
+                int floor = (int)Math.Ceiling(baseGain * (1 - MaxLowerPct / 100.0));
+                int to = floor;
+                for (int g = baseGain - 1; g >= floor; g--)
+                    if (a.Predict((double)g / baseGain) <= aim) { to = g; break; }
+                a.Capped = to == floor && a.Predict((double)to / baseGain) > aim;
+                a.SetChange(to, baseGain, gain);
                 a.Verdict = excess >= 1.5 ? Verdict.Lower : Verdict.SlightlyLower;
                 a.Headline = a.Verdict == Verdict.Lower ? "Too strong: lower the FFB gain" : "A bit strong: lower the FFB gain slightly";
                 a.Detail = string.Format(
-                    "Clipping {0:0.0} % of the driving time, above your allowed {1:0.0} %. Where it clips the motor is at its limit, " +
-                    "so details of the road and the car are lost there.", a.ClipPct, allowed);
-                if (gain.HasValue)
+                    "Clipping {0:0.0} %, above your target {1:0.0} %: the motor is at its limit there and " +
+                    "road and car details are lost. {2}", a.ClipPct, target, a.Outcome());
+                if (a.Capped) a.Hint = string.Format("MozaHud lowers at most {0} % at a time: drive the stage again to check.", MaxLowerPct);
+            }
+            else if (a.ClipPct < a.ZoneLowPct - 0.0001)
+            {
+                string low = string.Format("Clipping only {0:0.0} %, under your target zone ({1}): ", a.ClipPct, zone);
+                if (gain.HasValue && gain.Value >= MaxGain)
                 {
-                    int s = Scale(gain.Value, a.ChangePct);
-                    if (s != gain.Value) a.SuggestedGain = s;
+                    a.Verdict = Verdict.Raise;
+                    a.Headline = "Room to spare, but the gain is at its maximum";
+                    a.Detail = low + "the motor has force you aren't feeling.";
+                    a.Hint = "The game's gain is at its maximum (200): raise the base's FFB strength in Pit House if you want more force.";
+                }
+                else if (a.DrivingPoints < RaiseMinPoints)
+                {
+                    a.Verdict = Verdict.Good;
+                    a.Headline = "Good so far: no sign of too much force";
+                    a.Detail = low + "there may be room for more gain.";
+                    a.Hint = "Drive at least a minute for a raise suggestion.";
+                }
+                else
+                {
+                    int ceiling = Math.Min(gain.HasValue ? MaxGain : int.MaxValue, (int)Math.Floor(baseGain * (1 + MaxRaisePct / 100.0)));
+                    int to = baseGain;
+                    for (int g = ceiling; g > baseGain; g--)
+                        if (a.Predict((double)g / baseGain) <= aim) { to = g; break; }
+                    if (to == baseGain)
+                    {
+                        a.Verdict = Verdict.Good;
+                        a.Headline = "Good: the FFB gain fits this stage";
+                        a.Detail = low + string.Format("but even one step more gain would take it to about {0:0.0} %.",
+                            a.Predict((double)(baseGain + 1) / baseGain));
+                    }
+                    else
+                    {
+                        a.Capped = to == ceiling && ceiling < (gain.HasValue ? MaxGain : int.MaxValue);
+                        a.SetChange(to, baseGain, gain);
+                        a.Verdict = Verdict.Raise;
+                        a.Headline = "Room to spare: raise the FFB gain";
+                        a.Detail = low + "the motor has force you aren't feeling. " + a.Outcome();
+                        if (a.Capped) a.Hint = string.Format("MozaHud raises at most {0} % at a time: drive the stage again to see if more fits.", MaxRaisePct);
+                    }
                 }
             }
             else
             {
                 a.Verdict = Verdict.Good;
                 a.Headline = "Good: the FFB gain fits this stage";
-                a.Detail = a.ClipPoints == 0
-                    ? string.Format("No clipping while driving (you allow up to {0:0.0} %).", allowed)
-                    : string.Format("Clipping {0:0.0} % of the driving time, within your allowed {1:0.0} %: only the heaviest moments touch the limit, " +
-                                    "which costs little detail.", a.ClipPct, allowed);
-
-                // small hints only
-                int up = Math.Min(40, Round5((0.92 * max / Math.Max(0.1, a.P99RawNm) - 1) * 100));
-                if (a.P99RawNm < 0.8 * max && a.ClipPct <= allowed / 2 && up >= 5)
-                {
-                    if (gain.HasValue && gain.Value >= 200)
-                        a.Hint = "Room to spare, but the game's gain is at its maximum (200): raise the base's FFB strength in Pit House if you want more force.";
-                    else if (gain.HasValue)
-                        a.Hint = string.Format("Room to spare: about +{0} % ({1} → {2}) would still fit.", up, gain.Value, Scale(gain.Value, up));
-                    else
-                        a.Hint = string.Format("Room to spare: about +{0} % more gain would still fit.", up);
-                }
-                else if (excess > -0.5 && a.ClipPoints > 0)
-                {
-                    a.Hint = gain.HasValue
-                        ? string.Format("Close to your limit: if it feels harsh, −5 % ({0} → {1}) would reduce the clipping.", gain.Value, Scale(gain.Value, -5))
-                        : "Close to your limit: if it feels harsh, about −5 % gain would reduce the clipping.";
-                }
+                a.Detail = string.Format("Clipping {0:0.0} %, in your target zone ({1}): only the heaviest moments touch the limit " +
+                                         "and little force is left unused.", a.ClipPct, zone);
             }
             if (a.LockClipPoints > 0)
                 a.Detail += string.Format(" Soft-lock time not counted ({0:0.0} s at the rotation limit).", a.LockPoints / 10.0);
             return a;
         }
 
-        static int Scale(int gain, int pct) { return Math.Max(0, Math.Min(200, (int)(Math.Round(gain * (1 + pct / 100.0) / 5) * 5))); }
+        void SetChange(int to, int baseGain, int? gain)
+        {
+            ChangePct = (int)Math.Round((to / (double)baseGain - 1) * 100);
+            if (ChangePct == 0) ChangePct = to > baseGain ? 1 : -1;
+            PredictedPct = Predict((double)to / baseGain);
+            if (gain.HasValue) SuggestedGain = to;
+        }
 
-        static int Round5(double v) { return (int)(Math.Round(v / 5) * 5); }
+        string Outcome()
+        {
+            return SuggestedGain.HasValue
+                ? string.Format("At {0} it would be about {1:0.0} %.", SuggestedGain.Value, PredictedPct)
+                : string.Format("About {0}{1} % gain would bring it to about {2:0.0} %.", ChangePct > 0 ? "+" : "−", Math.Abs(ChangePct), PredictedPct);
+        }
     }
 
     /// <summary>

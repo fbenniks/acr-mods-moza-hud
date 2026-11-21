@@ -37,7 +37,7 @@ namespace MozaHud
             var gl = new Label { Text = "FFB gain", ForeColor = Theme.Muted, AutoSize = true, Location = new Point(22, 76) };
             _gain = new NumericUpDown
             {
-                Minimum = 0, Maximum = 200, Increment = 5, Value = Math.Max(0, Math.Min(200, suggested)), Width = 70,
+                Minimum = 0, Maximum = 200, Increment = 1, Value = Math.Max(0, Math.Min(200, suggested)), Width = 70,
                 Location = new Point(90, 73), BackColor = Theme.PanelAlt, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle,
                 TextAlign = HorizontalAlignment.Right, Font = new Font("Segoe UI Semibold", 10f),
             };

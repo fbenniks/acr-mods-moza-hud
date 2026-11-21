@@ -72,12 +72,26 @@ aren't saved.
 
 Only time while driving (over 5 km/h) and away from the soft lock counts.
 
-- Clipping above the **allowed clipping** setting (default 2.5 %) → *a bit strong* (less than 1.5 points over) or
-  *too strong*, with a suggested gain: the step grows with the excess (0.6 points over → −5 %, 2.9 over → −10 %,
-  at most −30 %), rounded to 5.
-- At or below it → *good*, with at most a small hint: *room to spare* (clipping under half the allowed share and the
-  strongest moments under 80 % of the limit; at the game's maximum of 200 the hint points to the base's strength in
-  Pit House) or *close to your limit* (within 0.5 points).
+The **target clipping** setting (default 2.5 %) is a goal with a green zone below it, from 60 % of the target up to
+the target (1.5–2.5 % by default):
+
+- Above the target → *a bit strong* (less than 1.5 points over) or *too strong*, with a lower gain.
+- In the zone → *good*.
+- Under the zone → *room to spare* (blue), with a higher gain. Only after at least 60 s of driving; at the game's
+  maximum of 200 it points to the base's strength in Pit House instead.
+
+The suggested gain is in steps of 1: the highest gain whose **predicted** clipping stays 0.3 points under the target
+(and not under the zone). The prediction scales the run's raw torque peaks (one per 0.1 s) by new gain / old gain,
+since AC Rally's force scales linearly with the gain:
+
+- Going up it is exact for every peak below the limit: a peak clips once peak × new/old reaches the limit.
+- Going down, a clipped peak's real size is unknown; how far past the limit they went is estimated from how fast the
+  peaks thin out in the last 1 Nm below the limit (an exponential tail).
+
+Checked on runs of the same stage at two gains: Sisteron 135 → predicted 5.7 % at 150, measured 5.35 %; Greece 180 →
+4.4 % at 200, measured 4.47 %; down, Sisteron 150 → about 2.5 % at 135, measured 2.32 %. One recommendation changes the
+gain by at most +15 % / −25 %, so one careful (or wild) run can't cause a big jump. `MozaHud.exe --advice | more`
+prints the advice and predictions for every saved run.
 
 ## StageSwitch link
 

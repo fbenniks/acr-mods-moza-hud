@@ -14,10 +14,10 @@ namespace MozaHud
         static readonly object Gate = new object();
         static readonly Dictionary<string, string> Values = new Dictionary<string, string>();
 
-        public const double DefaultAllowedClipPct = 2.5;
+        public const double DefaultTargetClipPct = 2.5;
 
-        /// <summary>Clipping (% of driving time) that is still fine; above it MozaHud recommends lowering the gain.</summary>
-        public static double AllowedClipPct = DefaultAllowedClipPct;
+        /// <summary>Target clipping (% of driving time): above it MozaHud recommends less gain, under 60 % of it more gain (ini key kept as allowed_clipping_pct).</summary>
+        public static double TargetClipPct = DefaultTargetClipPct;
 
         public static event Action Changed;
 
@@ -33,16 +33,16 @@ namespace MozaHud
                         if (eq > 0) Values[line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
                     }
                 double d;
-                if (TryGet("allowed_clipping_pct", out d)) AllowedClipPct = Clamp(d);
+                if (TryGet("allowed_clipping_pct", out d)) TargetClipPct = Clamp(d);
             }
             catch (Exception ex) { Log.Write("Reading settings failed: " + ex.Message); }
         }
 
-        public static void SetAllowedClipPct(double v)
+        public static void SetTargetClipPct(double v)
         {
             v = Clamp(v);
-            if (Math.Abs(v - AllowedClipPct) < 0.001) return;
-            AllowedClipPct = v;
+            if (Math.Abs(v - TargetClipPct) < 0.001) return;
+            TargetClipPct = v;
             Set("allowed_clipping_pct", v);
             var h = Changed; if (h != null) h();
         }

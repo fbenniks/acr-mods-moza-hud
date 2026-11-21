@@ -64,6 +64,34 @@ namespace MozaHud
                 return 0;
             }
 
+            // FFB gain advice for every saved run, plus the predicted clipping a few gain steps around it
+            // (for checking the advice from a shell: MozaHud.exe --advice | more).
+            if (arg == "--advice")
+            {
+                Settings.Load();
+                foreach (var run in StageStore.List())
+                {
+                    StageStore.EnsurePoints(run);
+                    var a = run.Analyse();
+                    Console.WriteLine(run.Start.ToString("yyyy-MM-dd HH:mm") + "  " + run.Title + "  ·  " + run.Car + "  ·  gain " + (run.Gain.HasValue ? run.Gain.ToString() : "?"));
+                    Console.WriteLine("  " + a.Verdict + ": clipping " + a.ClipPct.ToString("0.00") + " %" +
+                        (a.ChangePct != 0 ? "  →  " + (a.SuggestedGain.HasValue ? a.SuggestedGain.ToString() : a.ChangePct.ToString("+0;-0") + " %") +
+                                            " (about " + a.PredictedPct.ToString("0.00") + " %" + (a.Capped ? ", capped" : "") + ")" : ""));
+                    Console.WriteLine("  " + a.Headline + " | " + a.Detail + (a.Hint == "" ? "" : " | " + a.Hint));
+                    if (run.Gain.HasValue && run.Gain.Value > 0 && a.Verdict != Verdict.NotEnoughData)
+                    {
+                        var sb = new System.Text.StringBuilder("  predicted:");
+                        foreach (int d in new[] { -20, -10, -5, 5, 10, 20 })
+                        {
+                            int g = run.Gain.Value + d;
+                            if (g > 0 && g <= Analysis.MaxGain) sb.Append("  ").Append(g).Append(": ").Append(a.Predict(g / (double)run.Gain.Value).ToString("0.00")).Append(" %");
+                        }
+                        Console.WriteLine(sb);
+                    }
+                }
+                return 0;
+            }
+
             // Turn a tools\torque-log.ps1 capture into a stage run (for trying the window without the game).
             if (arg == "--import-log" && args.Length > 1)
             {
