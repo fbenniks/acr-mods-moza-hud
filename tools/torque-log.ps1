@@ -36,6 +36,7 @@ if (-not $Out) {
     $dir = Join-Path $PSScriptRoot 'logs'; New-Item -ItemType Directory -Force $dir | Out-Null
     $Out = Join-Path $dir ("torque-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.csv')
 }
+New-Item -ItemType Directory -Force (Split-Path -Parent $Out) | Out-Null
 
 $p = New-Object System.IO.Ports.SerialPort $Port, 115200
 $p.ReadTimeout = 5; $p.DtrEnable = $true
