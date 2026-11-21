@@ -27,7 +27,7 @@ namespace MozaHud
             new[] { "MOZA_TMOS",  "MOZA MOSFET temperature", "temp" },
             new[] { "MOZA_TMCU",  "MOZA MCU temperature",    "temp" },
             new[] { "MOZA_TQPK",  "MOZA torque peak",        "sys"  },
-            new[] { "MOZA_TQAVG", "MOZA torque average",     "sys"  },
+            new[] { "MOZA_TQAVG", "MOZA torque",             "sys"  },
             new[] { "MOZA_LOAD",  "MOZA FFB load",           "sys"  },
             new[] { "MOZA_CLIP",  "MOZA clipping",           "sys"  },
         };
@@ -53,7 +53,7 @@ namespace MozaHud
         public void SetTorque(TorqueStats s)
         {
             Set("MOZA_TQPK", s.Valid ? s.PeakNm : (double?)null);
-            Set("MOZA_TQAVG", s.Valid ? s.AvgNm : (double?)null);
+            Set("MOZA_TQAVG", s.Valid ? s.NowNm : (double?)null);   // id kept from the 1 s average it replaced
             Set("MOZA_LOAD", s.Valid ? s.LoadPct : (double?)null);
             Set("MOZA_CLIP", s.Valid ? s.ClipPct : (double?)null);
         }

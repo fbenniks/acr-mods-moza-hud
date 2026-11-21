@@ -208,7 +208,7 @@ namespace MozaHud
                     t == null ? "–" : t.Motor.ToString("0.0"),
                     t == null ? "–" : t.Mosfet.ToString("0.0"),
                     t == null ? "–" : t.Mcu.ToString("0"),
-                    s.Valid ? string.Format("Torque {0:0.0} Nm · clip {1:0} %", s.PeakNm, s.ClipPct) : "Torque –");
+                    s.Valid ? string.Format("Torque {0:0.0} Nm · clip {1:0} %", s.NowNm, s.ClipPct) : "Torque –");
             else
                 tip = "MozaHud: " + line1;
             try { SetIcon(t, tip.Length > 63 ? tip.Substring(0, 63) : tip); } catch { }

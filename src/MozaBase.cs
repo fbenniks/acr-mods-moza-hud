@@ -145,25 +145,38 @@ namespace MozaHud
     }
 
     /// <summary>
-    /// Rolling one-second window of torque samples. Afterburner reads a counter about once a second, so the overlay
-    /// shows the peak and average of the last second instead of a random instant.
+    /// Turns the ~30 Hz torque samples into overlay values.
+    ///  - Now: the torque low-passed with a ~150 ms time constant (the force you hold, without single-sample jitter
+    ///    from kerbs and road texture). Follows the wheel within a few tenths of a second.
+    ///  - Peak: the highest smoothed value of the last second, so one brief spike doesn't count as a peak.
+    ///  - Clipping: share of raw samples in the last second at the base's limit (a spike that hits the limit did clip).
     /// </summary>
     public sealed class TorqueWindow
     {
         /// <summary>Peak torque of the base. R5 = 5.5 Nm. Samples at (or within 0.15 Nm of) it count as clipping.</summary>
         public double MaxNm = 5.5;
+        /// <summary>Smoothing time constant in ms.</summary>
+        public double SmoothMs = 150;
         const double ClipMargin = 0.15;
 
-        readonly Queue<KeyValuePair<long, double>> _q = new Queue<KeyValuePair<long, double>>();
+        // (time, raw |Nm|, smoothed |Nm|)
+        readonly Queue<Sample> _q = new Queue<Sample>();
+        struct Sample { public long Ms; public double Raw, Smooth; }
+        double _ema;          // signed, so a quick reversal passes through zero like the wheel does
+        long _lastMs = -1;
 
         public void Add(long ms, int raw)
         {
-            _q.Enqueue(new KeyValuePair<long, double>(ms, (raw - MozaLink.TorqueZero) / 10.0));
+            double nm = (raw - MozaLink.TorqueZero) / 10.0;
+            if (_lastMs < 0 || ms - _lastMs > 500) _ema = nm;   // first sample or after a gap: start from here
+            else _ema += (1 - Math.Exp(-(ms - _lastMs) / SmoothMs)) * (nm - _ema);
+            _lastMs = ms;
+            _q.Enqueue(new Sample { Ms = ms, Raw = Math.Abs(nm), Smooth = Math.Abs(_ema) });
         }
 
         public void Trim(long nowMs, long windowMs = 1000)
         {
-            while (_q.Count > 0 && _q.Peek().Key < nowMs - windowMs) _q.Dequeue();
+            while (_q.Count > 0 && _q.Peek().Ms < nowMs - windowMs) _q.Dequeue();
         }
 
         public int Count { get { return _q.Count; } }
@@ -172,15 +185,13 @@ namespace MozaHud
         {
             var s = new TorqueStats();
             if (_q.Count == 0) return s;
-            double sum = 0; int clipped = 0;
-            foreach (var kv in _q)
+            int clipped = 0;
+            foreach (var x in _q)
             {
-                double a = Math.Abs(kv.Value);
-                if (a > s.PeakNm) s.PeakNm = a;
-                sum += a;
-                if (a >= MaxNm - ClipMargin) clipped++;
+                if (x.Smooth > s.PeakNm) s.PeakNm = x.Smooth;
+                if (x.Raw >= MaxNm - ClipMargin) clipped++;
             }
-            s.AvgNm = sum / _q.Count;
+            s.NowNm = Math.Abs(_ema);
             s.LoadPct = Math.Min(100, s.PeakNm / MaxNm * 100);
             s.ClipPct = 100.0 * clipped / _q.Count;
             s.Valid = true;
@@ -191,10 +202,10 @@ namespace MozaHud
     public struct TorqueStats
     {
         public bool Valid;
-        public double PeakNm, AvgNm, LoadPct, ClipPct;
+        public double NowNm, PeakNm, LoadPct, ClipPct;
         public override string ToString()
         {
-            return Valid ? string.Format("Torque peak {0:0.0} Nm · avg {1:0.0} Nm · clipping {2:0} %", PeakNm, AvgNm, ClipPct)
+            return Valid ? string.Format("Torque {0:0.0} Nm · peak {1:0.0} Nm · clipping {2:0} %", NowNm, PeakNm, ClipPct)
                          : "Torque —";
         }
     }

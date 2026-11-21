@@ -5,10 +5,13 @@ Shows live values from a MOZA wheelbase (tested: R5) in the MSI Afterburner / Ri
 | Afterburner graph | What it is |
 |---|---|
 | **MOZA motor temp**, **MOZA MOSFET temp**, **MOZA MCU temp** | Temperatures (°C) |
-| **MOZA torque peak** | Highest force-feedback torque of the last second (Nm) |
-| **MOZA torque avg** | Average force-feedback torque of the last second (Nm) |
+| **MOZA torque avg** | Current force-feedback torque, lightly smoothed (~150 ms) so kerbs and road texture don't make it jump (Nm) |
+| **MOZA torque peak** | Highest smoothed torque of the last second (Nm) |
 | **MOZA FFB load** | Torque peak as % of the base's maximum (100 % = at the limit) |
-| **MOZA clipping** | Share of the last second the motor was at its maximum torque (%) |
+| **MOZA clipping** | Share of the last second the motor was at its maximum torque, from the raw samples (%) |
+
+Afterburner reads its sources once per second by default, which makes the torque look slow. For a livelier overlay
+set Settings → Monitoring → **Hardware polling period** to 250 ms (or lower).
 
 The tray icon shows the motor temperature; hover for everything.
 
@@ -53,8 +56,8 @@ says so). The AIDA64 plugin only starts AIDA64 when it's installed.
     That one step is 0.1 Nm (and not 0.1 % of the current limit) is still to be confirmed by driving with a lower
     max torque in Pit House.
 - **Clipping** counts samples within 0.15 Nm of the maximum (5.5 Nm, `TorqueWindow.MaxNm`; change it for other bases).
-- **Afterburner** reads about once a second, so torque is summarised over a rolling one-second window, republished
-  every 100 ms.
+- **Torque** is low-passed (time constant `TorqueWindow.SmoothMs` = 150 ms, on the signed value so a quick reversal
+  passes through zero); the peak is the highest smoothed value of the last second. Values are republished every 100 ms.
 - An earlier version used Windows performance counters and the PerfCounter plugin. After re-registering the counter
   category with more counters, readers matched counters to the wrong values; setup now removes that registration.
 
