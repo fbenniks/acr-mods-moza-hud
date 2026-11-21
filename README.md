@@ -109,7 +109,7 @@ says so). The AIDA64 plugin only starts AIDA64 when it's installed.
     driving (`tools/torque-log.ps1`): it opposes the steering and clips at 445 / 554 (±5.5 Nm, the R5's peak).
     That one step is 0.1 Nm (and not 0.1 % of the current limit) is still to be confirmed by driving with a lower
     max torque in Pit House.
-- **Clipping** counts samples within 0.15 Nm of the maximum (5.5 Nm, `TorqueWindow.MaxNm`; change it for other bases).
+- **Clipping** counts samples within 0.15 Nm of the base's torque limit (see *Which base*).
 - **Torque** is low-passed (time constant `TorqueWindow.SmoothMs` = 150 ms, on the signed value so a quick reversal
   passes through zero); the peak is the highest smoothed value of the last second. Values are republished every 100 ms.
 - An earlier version used Windows performance counters and the PerfCounter plugin. After re-registering the counter
