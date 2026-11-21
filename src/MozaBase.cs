@@ -99,6 +99,38 @@ namespace MozaHud
 
         public void RequestRotationLimit() { _sp.Write(LimitFrame, 0, LimitFrame.Length); }
 
+        // Max torque setting ("MotGetSteer_PeakTorque" [40,18], % of the base's rated torque).
+        public const byte SettingPeakTorque = 18;
+        static readonly byte[] PeakTorqueFrame = Frame(SettingsGroup, SettingPeakTorque);
+        public void RequestPeakTorque() { _sp.Write(PeakTorqueFrame, 0, PeakTorqueFrame.Length); }
+
+        // Identity strings, read like Pit House does on connect (pure queries: the request carries only a sector
+        // number 1..4, the reply that sector number plus 16 characters):
+        //   group 7 = product type ("R5 Black # MOT-1-V03"), 8 = hardware version ("RS21-D05-HW BM-CU-V10");
+        //   group 4 = firmware version (4 bytes).
+        public const byte GroupProductType = 7, GroupHardwareVersion = 8, GroupFirmware = 4;
+
+        public void RequestText(byte group, byte sector)
+        {
+            var b = new byte[] { Start, 1, group, BaseId, sector, 0 };
+            int sum = Magic;
+            for (int i = 0; i < b.Length - 1; i++) sum += b[i];
+            b[b.Length - 1] = (byte)(sum % 256);
+            _sp.Write(b, 0, b.Length);
+        }
+
+        public void RequestFirmware()
+        {
+            var b = new byte[] { Start, 4, GroupFirmware, BaseId, 0, 0, 0, 0, 0 };
+            int sum = Magic;
+            for (int i = 0; i < b.Length - 1; i++) sum += b[i];
+            b[b.Length - 1] = (byte)(sum % 256);
+            _sp.Write(b, 0, b.Length);
+        }
+
+        /// <summary>Called for other replies from the base: group (without the reply bit) and payload.</summary>
+        public Action<byte, byte[]> OnFrame;
+
         /// <summary>Reads whatever arrives for up to <paramref name="ms"/> milliseconds and reports complete replies.</summary>
         public void Pump(int ms)
         {
@@ -123,12 +155,18 @@ namespace MozaHud
                 if (i + 1 >= _buf.Count) break;
                 int total = _buf[i + 1] + 5;
                 if (i + total > _buf.Count) break;   // wait for the rest
-                if (_buf[i + 1] == 3 && _buf[i + 3] == 0x31)
+                bool fromBase = _buf[i + 3] == 0x31;
+                if (fromBase && _buf[i + 1] == 3 && (_buf[i + 2] == (ReadGroup | 0x80) || _buf[i + 2] == (SettingsGroup | 0x80)))
                 {
                     int raw = (_buf[i + 5] << 8) | _buf[i + 6];
                     if (raw >= 32768) raw -= 65536;
                     if (_buf[i + 2] == (ReadGroup | 0x80) && OnValue != null) OnValue(_buf[i + 4], raw);
                     else if (_buf[i + 2] == (SettingsGroup | 0x80) && OnSetting != null) OnSetting(_buf[i + 4], raw);
+                }
+                else if (fromBase && (_buf[i + 2] & 0x80) != 0 && _buf[i + 2] != 0x8E && OnFrame != null)   // 0x0E = debug text
+                {
+                    var payload = _buf.GetRange(i + 4, _buf[i + 1]).ToArray();
+                    OnFrame((byte)(_buf[i + 2] & 0x7F), payload);
                 }
                 i += total;
             }

@@ -141,7 +141,7 @@ namespace MozaHud
             // ---- torque ----
             double yMax = Math.Ceiling(_maxNm + 0.5);
             Func<double, float> ty = v => tr.Bottom - (float)(Math.Min(v, yMax) / yMax * tr.Height);
-            DrawFrame(g, tr, 0, yMax, 1, "Nm");
+            DrawFrame(g, tr, 0, yMax, _maxNm > 14 ? 5 : _maxNm > 7 ? 2 : 1, "Nm");
             using (var lockBrush = new SolidBrush(Color.FromArgb(46, 140, 150, 170)))
                 for (int c = 0; c < cols; c++) if (lockc[c]) g.FillRectangle(lockBrush, tr.Left + c, tr.Top, 1, tr.Height);
             DrawSeries(g, tqMax, has, cols, tr.Left, ty, Color.FromArgb(70, Theme.Accent), 1f, true, tr.Bottom);

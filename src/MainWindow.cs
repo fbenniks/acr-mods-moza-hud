@@ -243,7 +243,7 @@ namespace MozaHud
                 if (run == null) return;
                 run = new StageRun
                 {
-                    Start = run.Start, End = DateTime.Now, Track = run.Track, Stage = run.Stage, Car = run.Car, Gain = run.Gain,
+                    Start = run.Start, End = DateTime.Now, Track = run.Track, Stage = run.Stage, Car = run.Car, Gain = run.Gain, Base = run.Base,
                     GainSource = run.GainSource, RotationDeg = run.RotationDeg, MaxNm = run.MaxNm, Points = pts ?? new List<StagePoint>(),
                 };
             }
@@ -282,6 +282,7 @@ namespace MozaHud
                 new[] { "SOFT LOCK", (a.LockPoints / 10.0).ToString("0.0") + " s" },
                 new[] { "MOTOR MAX", a.MaxMotor.ToString("0") + " °C" },
                 new[] { "MOSFET MAX", a.MaxMosfet.ToString("0") + " °C" },
+                new[] { "BASE", (string.IsNullOrEmpty(run.Base) ? "" : run.Base + " · ") + run.MaxNm.ToString("0.0") + " Nm" },
                 new[] { "ROTATION", run.RotationDeg > 0 ? run.RotationDeg + "°" : "?" },
                 new[] { "FFB GAIN", run.Gain.HasValue ? run.Gain.Value.ToString() : "?" },
             });

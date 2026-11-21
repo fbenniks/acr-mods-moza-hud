@@ -43,6 +43,9 @@ namespace MozaHud
 
         public string Status { get; private set; }
 
+        /// <summary>The connected base's model ("R5"), stored with each run.</summary>
+        public volatile string BaseName = "";
+
         /// <summary>Call every 100 ms with the torque bucket, temperatures, wheel position and rotation (degrees, 0 = unknown).</summary>
         public void Tick(TorqueWindow.Bucket b, Temperatures temps, double? wheel, int rotationDeg, double maxNm)
         {
@@ -116,6 +119,7 @@ namespace MozaHud
             // stage name / gain: StageSwitch logs it a moment after the stage loads
             if (!_resolved && now - _runStartUtc > TimeSpan.FromSeconds(4)) Resolve();
             if (_run.RotationDeg == 0 && rotationDeg > 0) _run.RotationDeg = rotationDeg;   // base answered after the start
+            if (_run.Base.Length == 0 && !string.IsNullOrEmpty(BaseName)) { _run.Base = BaseName; _run.MaxNm = maxNm; }
 
             if (g.CurrentTimeMs > 0) _lastCurTime = g.CurrentTimeMs;
 
@@ -158,7 +162,7 @@ namespace MozaHud
             var run = new StageRun
             {
                 Start = DateTime.Now, Track = g.Track, Car = g.Car, Stage = g.Track,
-                RotationDeg = rotationDeg, MaxNm = maxNm, PointsLoaded = true,
+                RotationDeg = rotationDeg, MaxNm = maxNm, PointsLoaded = true, Base = BaseName ?? "",
             };
             lock (_gate) _run = run;
             _runStartUtc = DateTime.UtcNow;

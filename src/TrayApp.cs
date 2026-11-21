@@ -121,6 +121,21 @@ namespace MozaHud
             SensorFeed feed = null;
             string feedStatus = null;
 
+            var baseInfo = new BaseInfo();
+            var ceiling = new CeilingCheck();
+            long nextIdentity = 0, nextCeilingCheck = 30000;
+            // which base, what limit: the measured ceiling is remembered per model and max torque setting
+            Action applyBase = () =>
+            {
+                double measured;
+                string key = "measured_nm." + baseInfo.Model.Replace(' ', '_') + "." + baseInfo.PeakTorquePct;
+                baseInfo.MeasuredNm = Settings.TryGet(key, out measured) && measured > 0 ? measured : (double?)null;
+                window.MaxNm = baseInfo.MaxNm;
+                _recorder.BaseName = baseInfo.Model;
+                Log.Write("Base: " + baseInfo.Describe() + " (type '" + baseInfo.ProductType + "', hw '" + baseInfo.HardwareVersion +
+                          "', fw " + baseInfo.Firmware + ", max torque " + baseInfo.PeakTorquePct + " %)");
+            };
+
             var seen = new System.Collections.Generic.HashSet<byte>();
             Action<byte, int> onValue = (id, raw) =>
             {
@@ -128,7 +143,7 @@ namespace MozaHud
                 if (seen.Add(id)) Log.Write("first reply for id " + id + ": raw " + raw);
                 switch (id)
                 {
-                    case MozaLink.IdTorque: window.Add(now, raw); break;
+                    case MozaLink.IdTorque: window.Add(now, raw); ceiling.Add(raw); break;
                     case MozaLink.IdMcu: temps.Mcu = raw / 100.0; break;
                     case MozaLink.IdMosfet: temps.Mosfet = raw / 100.0; break;
                     case MozaLink.IdMotor: temps.Motor = raw / 100.0; tempAt = now; break;
@@ -138,10 +153,22 @@ namespace MozaHud
             // base rotation setting (half degrees): the soft lock is at ±half of it
             Action<byte, int> onSetting = (id, raw) =>
             {
+                if (id == MozaLink.SettingPeakTorque && raw > 0 && raw <= 100 && raw != baseInfo.PeakTorquePct)
+                {
+                    baseInfo.PeakTorquePct = raw;
+                    ceiling.Reset();
+                    if (baseInfo.Model.Length > 0) applyBase();
+                    return;
+                }
                 if (id != MozaLink.SettingLimit || raw <= 0) return;
                 int deg = raw * 2;
                 if (deg != _rotationDeg) Log.Write("Base rotation: " + deg + "°");
                 _rotationDeg = deg;
+            };
+            Action<byte, byte[]> onFrame = (group, payload) =>
+            {
+                if (group == MozaLink.GroupFirmware) { baseInfo.SetFirmware(payload); return; }
+                if (baseInfo.AddText(group, payload)) { ceiling.Reset(); applyBase(); }
             };
             var wheel = new WheelAxis();
             long nextRotation = 0;
@@ -166,7 +193,11 @@ namespace MozaHud
                         if (port == null) linkStatus = "No MOZA wheelbase found";
                         else
                         {
-                            try { link = new MozaLink(port) { OnValue = onValue, OnSetting = onSetting }; linkStatus = null; nextTemp = 0; }
+                            try
+                            {
+                                link = new MozaLink(port) { OnValue = onValue, OnSetting = onSetting, OnFrame = onFrame };
+                                linkStatus = null; nextTemp = 0; nextIdentity = 0; nextRotation = 0;
+                            }
                             catch (UnauthorizedAccessException) { linkStatus = port + " is in use by another program (Moza Pit House?)"; }
                             catch (Exception ex) { linkStatus = "Can't open " + port + ": " + ex.Message; port = null; }
                         }
@@ -183,7 +214,18 @@ namespace MozaHud
                             nextTemp = ms + TempEveryMs;
                             link.Request(MozaLink.IdMcu); link.Request(MozaLink.IdMosfet); link.Request(MozaLink.IdMotor);
                         }
-                        if (ms >= nextRotation) { nextRotation = ms + 5000; link.RequestRotationLimit(); }
+                        if (ms >= nextRotation) { nextRotation = ms + 5000; link.RequestRotationLimit(); link.RequestPeakTorque(); }
+                        if (ms >= nextIdentity)
+                        {
+                            // until the model is known; afterwards once a minute (another base may be plugged in)
+                            nextIdentity = ms + (baseInfo.Model.Length == 0 ? 5000 : 60000);
+                            for (byte s = 1; s <= 2; s++)
+                            {
+                                link.RequestText(MozaLink.GroupProductType, s);
+                                link.RequestText(MozaLink.GroupHardwareVersion, s);
+                            }
+                            link.RequestFirmware();
+                        }
                         link.Pump(25);
                     }
                     catch (Exception ex)
@@ -197,6 +239,32 @@ namespace MozaHud
 
                 ms = clock.ElapsedMilliseconds;
                 window.Trim(ms);
+
+                // real torque ceiling from clipping, when it differs from rated × max torque setting
+                if (ms >= nextCeilingCheck && baseInfo.Model.Length > 0)
+                {
+                    nextCeilingCheck = ms + 30000;
+                    var plateau = ceiling.Plateau();
+                    if (plateau.HasValue)
+                    {
+                        double expected = Math.Round((baseInfo.RatedNm > 0 ? baseInfo.RatedNm : BaseInfo.FallbackNm) * baseInfo.PeakTorquePct / 100.0, 1);
+                        string key = "measured_nm." + baseInfo.Model.Replace(' ', '_') + "." + baseInfo.PeakTorquePct;
+                        bool off = Math.Abs(plateau.Value - expected) > 0.3;
+                        if (off && (!baseInfo.MeasuredNm.HasValue || Math.Abs(baseInfo.MeasuredNm.Value - plateau.Value) > 0.05))
+                        {
+                            Log.Write("Torque ceiling measured at " + plateau.Value + " Nm (expected " + expected + " Nm): using the measured value");
+                            Settings.Set(key, plateau.Value);
+                            applyBase();
+                        }
+                        else if (!off && baseInfo.MeasuredNm.HasValue)
+                        {
+                            Log.Write("Torque ceiling " + plateau.Value + " Nm matches the expected " + expected + " Nm again");
+                            Settings.Set(key, 0);
+                            applyBase();
+                        }
+                    }
+                }
+
                 if (ms < nextPublish) continue;
                 nextPublish = ms + PublishEveryMs;
 
@@ -236,7 +304,7 @@ namespace MozaHud
                         line2 = stats.ToString();
                     }
                     if (feedStatus != null) line2 = (line2 == null ? "" : line2 + "  ") + feedStatus;
-                    _baseLines = new[] { line1, line2, _rotationDeg > 0 ? "Rotation " + _rotationDeg + "°" : null };
+                    _baseLines = new[] { baseInfo.Describe(), line1, line2, _rotationDeg > 0 ? "Rotation " + _rotationDeg + "°" : null };
                     var tShow = t == null ? null : new Temperatures { Mcu = t.Mcu, Mosfet = t.Mosfet, Motor = t.Motor };
                     var st = stats;
                     _ui.Post(_ => Show(tShow, st, line1, line2), null);

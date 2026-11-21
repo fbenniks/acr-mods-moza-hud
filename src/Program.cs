@@ -39,14 +39,22 @@ namespace MozaHud
                         var t = MozaLink.ReadTemperatures(port);
                         Console.WriteLine(t == null ? "No answer" : t.ToString());
 
-                        // one second of torque samples
+                        // identity + one second of torque samples
                         var win = new TorqueWindow();
+                        var info = new BaseInfo();
+                        int rotation = 0;
                         var clock = System.Diagnostics.Stopwatch.StartNew();
                         using (var link = new MozaLink(port))
                         {
                             link.OnValue = (id, raw) => { if (id == MozaLink.IdTorque) win.Add(clock.ElapsedMilliseconds, raw); };
+                            link.OnFrame = (g, p) => { if (g == MozaLink.GroupFirmware) info.SetFirmware(p); else info.AddText(g, p); };
+                            link.OnSetting = (id, raw) => { if (id == MozaLink.SettingPeakTorque) info.PeakTorquePct = raw; else if (id == MozaLink.SettingLimit) rotation = raw * 2; };
+                            for (byte s = 1; s <= 2; s++) { link.RequestText(MozaLink.GroupProductType, s); link.RequestText(MozaLink.GroupHardwareVersion, s); }
+                            link.RequestFirmware(); link.RequestPeakTorque(); link.RequestRotationLimit();
                             while (clock.ElapsedMilliseconds < 1000) { link.Request(MozaLink.IdTorque); link.Pump(25); }
                         }
+                        Console.WriteLine("Base: " + info.Describe() + "  rotation " + rotation + "°");
+                        Console.WriteLine("  product type '" + info.ProductType + "', hardware '" + info.HardwareVersion + "', firmware " + info.Firmware + ", max torque setting " + info.PeakTorquePct + " %");
                         Console.WriteLine(win.Stats() + "  (" + win.Count + " samples in 1 s)");
                     }
                     catch (Exception ex) { Console.WriteLine("Error: " + ex.GetType().Name + ": " + ex.Message); }

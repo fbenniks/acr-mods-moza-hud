@@ -1,6 +1,25 @@
 # MozaHud
 
-Shows live values from a MOZA wheelbase (tested: R5) in the MSI Afterburner / RivaTuner (RTSS) in-game overlay:
+Shows live values from a MOZA wheelbase in the MSI Afterburner / RivaTuner (RTSS) in-game overlay, and records
+AC Rally stages with FFB gain advice. Tested on an R5; other MOZA bases are recognised (see *Which base*).
+
+## Which base
+
+MozaHud asks the connected base who it is, the way Pit House does on connect (read-only queries):
+product type (group 7, e.g. `R5 Black # MOT-1-V03`), hardware version (group 8, `RS21-D05-HW BM-CU-V10`),
+firmware (group 4), the **max torque** setting (`[40,18]`, %) and the rotation (`[40,1]`, half degrees).
+The model is matched with the patterns from Pit House's `bin\config\device_config.json` (Pro/Ultra variants by
+hardware version). The base doesn't report its rated torque, so MozaHud has a table: the number in the name is the Nm
+(R9 9, R12 12, R16 16, R21 21, R25 25, R27 27; unknown future models the same way), except R3 = 3.9 and the
+R5 family = 5.5. The torque limit used for clipping and the graphs = rated × max torque setting.
+
+**Ceiling check**: when a base clips, its torque reading sticks at one value (R5: 5.4 Nm, hit far more often than the
+value below it). If such a plateau is more than 0.3 Nm away from the expected limit, MozaHud uses the measured value
+from then on (remembered per model and max torque setting in `settings.ini`, logged). This covers uncertain ratings
+and the open question whether the reading scales with the max torque setting.
+
+In Afterburner the torque graphs' limit is set to 6 Nm; for a bigger base raise *Graph limits* in Afterburner's
+monitoring settings.
 
 | Afterburner graph | What it is |
 |---|---|
