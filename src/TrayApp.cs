@@ -27,13 +27,22 @@ namespace MozaHud
         readonly ToolStripMenuItem _autostart = new ToolStripMenuItem("Start with Windows");
         readonly SynchronizationContext _ui;
         readonly Thread _worker;
+        readonly StageRecorder _recorder = new StageRecorder();
+        readonly Icon _appIcon = MakeAppIcon();
+        MainWindow _window;
+        volatile string[] _baseLines = new string[0];
+        volatile int _rotationDeg;
         volatile bool _stop, _paused;
         IntPtr _hIcon;
 
-        public TrayApp()
+        public TrayApp(bool showWindow)
         {
             _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+            _recorder.Saved = run => { var w = _window; if (w != null) w.OnRunSaved(run); };
 
+            var open = new ToolStripMenuItem("Open MozaHud") { Font = new Font(SystemFonts.MenuFont, FontStyle.Bold) };
+            open.Click += (s, e) => ShowWindow();
+            _tray.DoubleClick += (s, e) => ShowWindow();
             _setup.Click += (s, e) => RunSetup("--setup");
             _release.Click += (s, e) => { _paused = !_paused; _release.Checked = _paused; };
             _autostart.Click += (s, e) => SetAutostart(!_autostart.Checked);
@@ -43,8 +52,8 @@ namespace MozaHud
             exit.Click += (s, e) => ExitThread();
 
             var menu = new ContextMenuStrip();
-            menu.Items.AddRange(new ToolStripItem[] { _status, _status2, new ToolStripSeparator(), _setup, _release, _autostart,
-                new ToolStripSeparator(), remove, exit });
+            menu.Items.AddRange(new ToolStripItem[] { open, new ToolStripSeparator(), _status, _status2, new ToolStripSeparator(),
+                _setup, _release, _autostart, new ToolStripSeparator(), remove, exit });
             menu.Opening += (s, e) => RefreshMenu();
             _tray.ContextMenuStrip = menu;
             SetIcon(null, "MozaHud");
@@ -58,6 +67,29 @@ namespace MozaHud
 
             _worker = new Thread(Poll) { IsBackground = true, Name = "moza-poll" };
             _worker.Start();
+            if (showWindow) ShowWindow();
+        }
+
+        void ShowWindow()
+        {
+            if (_window == null || _window.IsDisposed) _window = new MainWindow(_recorder, () => _baseLines, _appIcon);
+            _window.Show();
+            if (_window.WindowState == FormWindowState.Minimized) _window.WindowState = FormWindowState.Normal;
+            _window.Activate();
+        }
+
+        static Icon MakeAppIcon()
+        {
+            using (var bmp = new Bitmap(32, 32))
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                using (var b = new SolidBrush(Color.FromArgb(255, 122, 26)))
+                using (var path = Rounded(new Rectangle(0, 0, 31, 31), 7)) g.FillPath(b, path);
+                using (var p = new Pen(Color.White, 2.6f) { LineJoin = LineJoin.Round })
+                    g.DrawLines(p, new[] { new PointF(5, 22), new PointF(11, 14), new PointF(16, 19), new PointF(21, 9), new PointF(27, 15) });
+                return Icon.FromHandle(bmp.GetHicon());
+            }
         }
 
         void RefreshMenu()
@@ -103,6 +135,18 @@ namespace MozaHud
                 }
             };
 
+            // base rotation setting (half degrees): the soft lock is at ±half of it
+            Action<byte, int> onSetting = (id, raw) =>
+            {
+                if (id != MozaLink.SettingLimit || raw <= 0) return;
+                int deg = raw * 2;
+                if (deg != _rotationDeg) Log.Write("Base rotation: " + deg + "°");
+                _rotationDeg = deg;
+            };
+            var wheel = new WheelAxis();
+            long nextRotation = 0;
+            bool recorderFailed = false;
+
             while (!_stop)
             {
                 long ms = clock.ElapsedMilliseconds;
@@ -122,7 +166,7 @@ namespace MozaHud
                         if (port == null) linkStatus = "No MOZA wheelbase found";
                         else
                         {
-                            try { link = new MozaLink(port) { OnValue = onValue }; linkStatus = null; nextTemp = 0; }
+                            try { link = new MozaLink(port) { OnValue = onValue, OnSetting = onSetting }; linkStatus = null; nextTemp = 0; }
                             catch (UnauthorizedAccessException) { linkStatus = port + " is in use by another program (Moza Pit House?)"; }
                             catch (Exception ex) { linkStatus = "Can't open " + port + ": " + ex.Message; port = null; }
                         }
@@ -139,6 +183,7 @@ namespace MozaHud
                             nextTemp = ms + TempEveryMs;
                             link.Request(MozaLink.IdMcu); link.Request(MozaLink.IdMosfet); link.Request(MozaLink.IdMotor);
                         }
+                        if (ms >= nextRotation) { nextRotation = ms + 5000; link.RequestRotationLimit(); }
                         link.Pump(25);
                     }
                     catch (Exception ex)
@@ -176,6 +221,10 @@ namespace MozaHud
                 }
                 if (linkStatus != lastLogged) { lastLogged = linkStatus; Log.Write("Status: " + (linkStatus ?? "connected to " + port)); }
 
+                // stage recording (AC Rally telemetry + base values), one point per 100 ms
+                try { _recorder.Tick(window.TakeBucket(), t, wheel.Read(), _rotationDeg, window.MaxNm); recorderFailed = false; }
+                catch (Exception ex) { if (!recorderFailed) Log.Write("Recorder error: " + ex); recorderFailed = true; }
+
                 if (ms >= nextUi)
                 {
                     nextUi = ms + UiEveryMs;
@@ -187,6 +236,7 @@ namespace MozaHud
                         line2 = stats.ToString();
                     }
                     if (feedStatus != null) line2 = (line2 == null ? "" : line2 + "  ") + feedStatus;
+                    _baseLines = new[] { line1, line2, _rotationDeg > 0 ? "Rotation " + _rotationDeg + "°" : null };
                     var tShow = t == null ? null : new Temperatures { Mcu = t.Mcu, Mosfet = t.Mosfet, Motor = t.Motor };
                     var st = stats;
                     _ui.Post(_ => Show(tShow, st, line1, line2), null);
@@ -271,7 +321,7 @@ namespace MozaHud
         {
             using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
             {
-                if (on) k.SetValue("MozaHud", "\"" + Application.ExecutablePath + "\"");
+                if (on) k.SetValue("MozaHud", "\"" + Application.ExecutablePath + "\" --tray");
                 else k.DeleteValue("MozaHud", false);
             }
         }
@@ -280,6 +330,7 @@ namespace MozaHud
         {
             _stop = true;
             _worker.Join(3000);
+            if (_window != null && !_window.IsDisposed) _window.Dispose();
             _tray.Visible = false;
             _tray.Dispose();
             if (_hIcon != IntPtr.Zero) DestroyIcon(_hIcon);

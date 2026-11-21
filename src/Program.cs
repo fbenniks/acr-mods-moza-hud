@@ -56,6 +56,15 @@ namespace MozaHud
                 return 0;
             }
 
+            // Turn a tools\torque-log.ps1 capture into a stage run (for trying the window without the game).
+            if (arg == "--import-log" && args.Length > 1)
+            {
+                var run = ImportTorqueLog(args[1]);
+                StageStore.Save(run);
+                Console.WriteLine("Saved " + run.FilePath + " (" + run.Points.Count + " points)");
+                return 0;
+            }
+
             bool created;
             using (new Mutex(true, "MozaHud_SingleInstance", out created))
             {
@@ -71,9 +80,41 @@ namespace MozaHud
                 Application.ThreadException += (s, e) => Log.Write("UI error: " + e.Exception);
                 AppDomain.CurrentDomain.UnhandledException += (s, e) => Log.Write("Fatal: " + e.ExceptionObject);
                 Log.Start();
-                Application.Run(new TrayApp());
+                Application.Run(new TrayApp(showWindow: Array.IndexOf(args, "--tray") < 0));
             }
             return 0;
+        }
+
+        static StageRun ImportTorqueLog(string path)
+        {
+            var lines = System.IO.File.ReadAllLines(path);
+            var head = lines[0].Split(',');
+            int ti = Array.IndexOf(head, "t_ms"), qi = Array.IndexOf(head, "mot_torque");
+            var win = new TorqueWindow();
+            var run = new StageRun
+            {
+                Start = System.IO.File.GetLastWriteTime(path), Stage = "Imported torque log", Track = "", Car = System.IO.Path.GetFileName(path),
+                EndReason = "imported", RotationDeg = 450, PointsLoaded = true,
+            };
+            long next = 100;
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            for (int i = 1; i < lines.Length; i++)
+            {
+                var f = lines[i].Split(',');
+                long ms = (long)double.Parse(f[ti], inv);
+                int raw;
+                if (!int.TryParse(f[qi], out raw)) continue;
+                win.Add(ms, raw);
+                if (ms >= next)
+                {
+                    next += 100;
+                    var b = win.TakeBucket();
+                    run.Points.Add(new StagePoint { T = ms / 1000f, Tq = (float)b.SmoothNm, TqMax = (float)b.MaxRawNm, Clip = b.Clipped > 0, Speed = 50, TMot = 25 + ms / 20000f, TMos = 30 + ms / 15000f });
+                }
+            }
+            run.End = run.Start.AddSeconds(run.Points.Count / 10.0);
+            run.Start = run.End.AddSeconds(-run.Points.Count / 10.0);
+            return run;
         }
     }
 }

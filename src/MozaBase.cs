@@ -68,9 +68,9 @@ namespace MozaHud
             return null;
         }
 
-        static byte[] Frame(byte id)
+        static byte[] Frame(byte group, byte id)
         {
-            var b = new byte[] { Start, 3, ReadGroup, BaseId, id, 0, 0, 0 };
+            var b = new byte[] { Start, 3, group, BaseId, id, 0, 0, 0 };
             int sum = Magic;
             for (int i = 0; i < b.Length - 1; i++) sum += b[i];
             b[b.Length - 1] = (byte)(sum % 256);
@@ -79,7 +79,8 @@ namespace MozaHud
 
         static readonly Dictionary<byte, byte[]> Frames = new Dictionary<byte, byte[]>
         {
-            { IdMcu, Frame(IdMcu) }, { IdMosfet, Frame(IdMosfet) }, { IdMotor, Frame(IdMotor) }, { IdTorque, Frame(IdTorque) },
+            { IdMcu, Frame(ReadGroup, IdMcu) }, { IdMosfet, Frame(ReadGroup, IdMosfet) }, { IdMotor, Frame(ReadGroup, IdMotor) },
+            { IdTorque, Frame(ReadGroup, IdTorque) },
         };
 
         public void Request(byte id)
@@ -87,6 +88,16 @@ namespace MozaHud
             var f = Frames[id];
             _sp.Write(f, 0, f.Length);
         }
+
+        // Settings (read group 40). Id 1 = rotation limit in half degrees (225 = 450°), as boxflat's "base-limit".
+        const byte SettingsGroup = 40;
+        public const byte SettingLimit = 1;
+        static readonly byte[] LimitFrame = Frame(SettingsGroup, SettingLimit);
+
+        /// <summary>Called for each settings reply: setting id, raw value.</summary>
+        public Action<byte, int> OnSetting;
+
+        public void RequestRotationLimit() { _sp.Write(LimitFrame, 0, LimitFrame.Length); }
 
         /// <summary>Reads whatever arrives for up to <paramref name="ms"/> milliseconds and reports complete replies.</summary>
         public void Pump(int ms)
@@ -112,11 +123,12 @@ namespace MozaHud
                 if (i + 1 >= _buf.Count) break;
                 int total = _buf[i + 1] + 5;
                 if (i + total > _buf.Count) break;   // wait for the rest
-                if (_buf[i + 1] == 3 && _buf[i + 2] == (ReadGroup | 0x80) && _buf[i + 3] == 0x31 && OnValue != null)
+                if (_buf[i + 1] == 3 && _buf[i + 3] == 0x31)
                 {
                     int raw = (_buf[i + 5] << 8) | _buf[i + 6];
                     if (raw >= 32768) raw -= 65536;
-                    OnValue(_buf[i + 4], raw);
+                    if (_buf[i + 2] == (ReadGroup | 0x80) && OnValue != null) OnValue(_buf[i + 4], raw);
+                    else if (_buf[i + 2] == (SettingsGroup | 0x80) && OnSetting != null) OnSetting(_buf[i + 4], raw);
                 }
                 i += total;
             }
@@ -172,6 +184,22 @@ namespace MozaHud
             else _ema += (1 - Math.Exp(-(ms - _lastMs) / SmoothMs)) * (nm - _ema);
             _lastMs = ms;
             _q.Enqueue(new Sample { Ms = ms, Raw = Math.Abs(nm), Smooth = Math.Abs(_ema) });
+            _bMax = Math.Max(_bMax, Math.Abs(nm));
+            _bCount++;
+            if (Math.Abs(nm) >= MaxNm - ClipMargin) _bClipped++;
+        }
+
+        // Accumulators for the stage recorder (reset by TakeBucket).
+        double _bMax; int _bCount, _bClipped;
+
+        public struct Bucket { public int Samples, Clipped; public double MaxRawNm, SmoothNm; }
+
+        /// <summary>What happened since the previous call: sample count, clipped samples, highest raw |Nm|, current smoothed (signed).</summary>
+        public Bucket TakeBucket()
+        {
+            var b = new Bucket { Samples = _bCount, Clipped = _bClipped, MaxRawNm = _bMax, SmoothNm = _ema };
+            _bMax = 0; _bCount = 0; _bClipped = 0;
+            return b;
         }
 
         public void Trim(long nowMs, long windowMs = 1000)
