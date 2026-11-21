@@ -15,7 +15,8 @@ namespace MozaHud
     {
         readonly StageRecorder _recorder;
         readonly Func<string[]> _baseStatus;
-        readonly Label _status = new Label(), _base = new Label(), _title = new Label(), _subtitle = new Label();
+        readonly Label _status = new Label(), _base = new Label();
+        readonly StageHeader _header = new StageHeader();
         readonly StatTiles _stats = new StatTiles();
         readonly ListBox _list = new ListBox();
         readonly AdviceBox _advice = new AdviceBox();
@@ -103,8 +104,7 @@ namespace MozaHud
 
             // ---- details ----
             var right = new Panel { Dock = DockStyle.Fill, Padding = new Padding(20, 14, 20, 16), BackColor = Theme.Bg };
-            _title.Dock = DockStyle.Top; _title.Height = 32; _title.Font = TitleFont; _title.ForeColor = Theme.Text;
-            _subtitle.Dock = DockStyle.Top; _subtitle.Height = 24; _subtitle.ForeColor = Theme.Muted;
+            _header.Dock = DockStyle.Top; _header.Height = 62;
             _advice.Dock = DockStyle.Top; _advice.Height = 104;
             _advice.ApplyClicked += ApplyInStageSwitch;
             var gap1 = new Panel { Dock = DockStyle.Top, Height = 10 };
@@ -120,8 +120,7 @@ namespace MozaHud
             right.Controls.Add(_stats);
             right.Controls.Add(gap1);
             right.Controls.Add(_advice);
-            right.Controls.Add(_subtitle);
-            right.Controls.Add(_title);
+            right.Controls.Add(_header);
 
             Controls.Add(right);
             Controls.Add(left);
@@ -171,19 +170,19 @@ namespace MozaHud
             if (sel) using (var b = new SolidBrush(Theme.Accent)) g.FillRectangle(b, e.Bounds.Left, e.Bounds.Top + 6, 3, e.Bounds.Height - 12);
 
             var item = _list.Items[e.Index];
+            StageRun src = item == _liveItem ? _recorder.Live : (StageRun)item;
             string title, line2, badge = ""; Color dot;
             if (item == _liveItem)
             {
-                var live = _recorder.Live;
-                title = live == null ? "Live" : "● Live: " + live.Title;
-                line2 = live == null ? "" : live.Car + "  ·  recording";
+                title = src == null ? "Live" : "Live: " + src.Title;
+                line2 = "recording";
                 dot = Theme.Bad;
             }
             else
             {
                 var r = (StageRun)item;
                 title = r.Title;
-                line2 = (string.IsNullOrEmpty(r.Car) ? "" : r.Car + "  ·  ") + r.Start.ToString("d MMM HH:mm") + "  ·  " + StageRecorder.FormatTime(r.Duration.TotalSeconds);
+                line2 = r.Start.ToString("d MMM HH:mm") + "  ·  " + StageRecorder.FormatTime(r.Duration.TotalSeconds);
                 StageStore.EnsurePoints(r);
                 var a = r.Analyse();
                 dot = Theme.VerdictColor(a.Verdict);
@@ -191,14 +190,29 @@ namespace MozaHud
                 else if (a.Verdict == Verdict.Good) badge = "OK";
             }
             var b0 = e.Bounds;
-            using (var db = new SolidBrush(dot)) g.FillEllipse(db, b0.Left + 14, b0.Top + 13, 9, 9);
+            // verdict dot, rally flag, title; car logo + car, date and time below
+            using (var db = new SolidBrush(dot)) g.FillEllipse(db, b0.Left + 12, b0.Top + 13, 8, 8);
+            float x = b0.Left + 26;
+            if (src != null)
+            {
+                string rallyName;
+                RallyStyle.For(Names.RallyOf(src, out rallyName), rallyName).DrawFlag(g, new RectangleF(x, b0.Top + 9, 24, 16));
+            }
+            float tx = x + 32;
             using (var tb = new SolidBrush(Theme.Text))
             using (var mb = new SolidBrush(Theme.Muted))
             {
-                var titleRect = new RectangleF(b0.Left + 30, b0.Top + 7, b0.Width - 30 - 54, 20);
+                var titleRect = new RectangleF(tx, b0.Top + 7, b0.Right - tx - 54, 20);
                 var sf = new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
                 g.DrawString(title, BoldFont, tb, titleRect, sf);
-                g.DrawString(line2, SmallFont, mb, new RectangleF(b0.Left + 30, b0.Top + 29, b0.Width - 40, 18), sf);
+                float lx = x;
+                if (src != null && !string.IsNullOrEmpty(src.Car))
+                {
+                    BrandMark.Draw(g, new RectangleF(x, b0.Top + 30, 24, 16), src.Car);
+                    line2 = src.Car + "  ·  " + line2;
+                    lx = tx;
+                }
+                g.DrawString(line2, SmallFont, mb, new RectangleF(lx, b0.Top + 30, b0.Right - lx - 8, 18), sf);
                 if (badge != "")
                     using (var bb = new SolidBrush(dot))
                     using (var rf = new StringFormat { Alignment = StringAlignment.Far })
@@ -305,15 +319,13 @@ namespace MozaHud
             _shown = run;
             if (run == null)
             {
-                _title.Text = "No stages recorded yet";
-                _subtitle.Text = "Drive a stage in AC Rally with MozaHud running; it is recorded automatically.";
+                _header.Set(null, "No stages recorded yet", null, "Drive a stage in AC Rally with MozaHud running; it is recorded automatically.");
                 _advice.Set(null, null);
                 _stats.Set(null);
                 _chart.SetData(null, 5.5, true);
                 return;
             }
             var a = run.Analyse();
-            _title.Text = (item == _liveItem ? "● " : "") + run.Title;
             var sub = new List<string>();
             if (!string.IsNullOrEmpty(run.Car)) sub.Add(run.Car);
             sub.Add(run.Start.ToString("ddd d MMM yyyy HH:mm"));
@@ -322,7 +334,9 @@ namespace MozaHud
                 sub.Add(run.EndReason == "finished"
                     ? "finished" + (string.IsNullOrEmpty(run.StageTime) ? "" : " in " + run.StageTime.TrimStart('0').TrimStart(':'))
                     : "not finished (" + run.EndReason + ")");
-            _subtitle.Text = string.Join("   ·   ", sub);
+            string rallyName;
+            _header.Set(RallyStyle.For(Names.RallyOf(run, out rallyName), rallyName),
+                (item == _liveItem ? "● " : "") + run.Title, run.Car, string.Join("   ·   ", sub));
             _advice.Set(run, a);
             UpdateApplyButton();
             _stats.Set(new[]
@@ -373,6 +387,41 @@ namespace MozaHud
             // closing the window keeps MozaHud running in the tray
             if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); return; }
             base.OnFormClosing(e);
+        }
+    }
+
+    /// <summary>Stage title with the rally's flag; below it the car's logo and the run's details.</summary>
+    sealed class StageHeader : Control
+    {
+        RallyStyle _flag; string _title = "", _car, _sub = "";
+        static readonly Font TitleFont = new Font("Segoe UI Semibold", 15f);
+        static readonly Font SubFont = new Font("Segoe UI", 9.5f);
+
+        public StageHeader()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        }
+
+        /// <summary>flag: null for none; car: draws its logo before the subtitle (which starts with the car's name).</summary>
+        public void Set(RallyStyle flag, string title, string car, string subtitle)
+        {
+            _flag = flag; _title = title ?? ""; _car = string.IsNullOrEmpty(car) ? null : car; _sub = subtitle ?? "";
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(Theme.Bg);
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            float x = 0;
+            if (_flag != null) { _flag.DrawFlag(g, new RectangleF(0, 6, 36, 24)); x = 46; }
+            var sf = new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap };
+            using (var tb = new SolidBrush(Theme.Text)) g.DrawString(_title, TitleFont, tb, new RectangleF(x - 3, 1, Width - x, 34), sf);
+            float sx = 0;
+            if (_car != null) { BrandMark.Draw(g, new RectangleF(0, 38, 30, 20), _car); sx = 38; }
+            else if (_flag != null) sx = 0;
+            using (var mb = new SolidBrush(Theme.Muted)) g.DrawString(_sub, SubFont, mb, new RectangleF(sx, 39, Width - sx, 20), sf);
         }
     }
 
