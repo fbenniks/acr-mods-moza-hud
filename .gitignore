@@ -1,0 +1,5 @@
+# Temporary files
+*.tmp
+*.log
+
+# MozaHud.exe is committed on purpose so a checkout gives a working app without rebuilding.
