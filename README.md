@@ -15,6 +15,38 @@ set Settings → Monitoring → **Hardware polling period** to 250 ms (or lower)
 
 The tray icon shows the motor temperature; hover for everything.
 
+## Stage graphs and FFB gain advice
+
+The MozaHud window (opens at start; tray icon double-click or **Open MozaHud**) records every AC Rally stage
+automatically and shows, per stage:
+
+- **Advice**: too strong (lower the gain), a bit strong, good, or headroom (raise the gain), with a suggested
+  gain when it's known (e.g. *150 → 135*). Only time while driving (over 5 km/h) counts. Rules: clipping ≥ 5 % of
+  the time → lower 10–30 %; 1.5–5 % → lower 5–10 %; otherwise, if even the strongest moments (99th percentile)
+  stay under 80 % of the base's 5.5 Nm → raise; else good. At the game's maximum (200) "raise" means: raise the
+  base's FFB strength in Pit House.
+- **Torque graph**: smoothed torque, raw 100 ms peaks (faint band), the limit (dashed), red marks where it clipped,
+  grey where the wheel was at the **soft lock**. The base's rotation setting is read from the base (e.g. 450°); the
+  wheel position comes from the Windows joystick axis, which spans exactly that rotation (the game's steering
+  value is identical). Within 3 % of full lock clipping is the soft lock pushing back and isn't counted.
+- **Temperature graph**: motor and MOSFET.
+- Scroll to zoom, drag to pan, double-click for the whole stage, hover for all values at that moment.
+
+Stage name, car and FFB gain come from AC Rally StageSwitch's log ("Applied FFB gain 150 for Monte-Carlo · Sisteron
+· Hyundai i20N Rally2"), otherwise from the game's save file.
+
+Runs are stored as CSV in `%APPDATA%\MozaHud\stages` (10 points per second); the last 100 runs are kept, none older
+than 60 days. Right-click a run to delete it. Runs with less than 20 s of driving aren't saved.
+
+How a stage is detected in AC Rally's shared memory (ACC layout; AC Rally leaves the status, lap and
+`iCurrentTime` fields at 0):
+- **on a stage** while the track name (static block) is filled; the menu clears it;
+- **finish**: the text stage clock (graphics `currentTime`, e.g. `02:58.143`) stops while the car still moves and
+  the physics keeps ticking; points after that are dropped. Fallback: the graphics block stops updating (results
+  screen) while physics ticks;
+- **restart**: the stage clock jumps back;
+- **pause**: the physics block stops updating.
+
 ## Use
 
 1. Run `MozaHud.exe`. It sits in the system tray; the icon shows the motor temperature

@@ -27,8 +27,9 @@ namespace MozaHud
         DateTime _nextSnapshotLog, _nextProcessCheck;
         bool _gameRunning;
         bool _resolved, _waitForReset, _prevOnStage, _physicsTicks;
-        int _prevStatus = -1, _lastPhysicsPacket = int.MinValue;
-        DateTime _physicsStillSince, _nextRawLog;
+        int _prevStatus = -1, _lastPhysicsPacket = int.MinValue, _lastGfxPacket = int.MinValue, _gfxFrozenPhysics;
+        DateTime _physicsStillSince, _nextRawLog, _gfxStillSince, _clockChangedAt;
+        int _clockValue = -1, _clockPhysics;
 
         /// <summary>Called on the polling thread when a run was saved (or discarded: null).</summary>
         public Action<StageRun> Saved;
@@ -62,19 +63,44 @@ namespace MozaHud
             bool onStage = g.Memory && g.Track.Length > 0 && g.Status != 1;
             if (onStage != _prevOnStage) { Log.Write((onStage ? "On stage: " : "Off stage: ") + g.Describe()); _prevOnStage = onStage; }
 
+            // Finish line: AC Rally stops updating the graphics block (results screen) while physics keeps ticking.
+            if (g.GraphicsPacket != _lastGfxPacket || g.PhysicsPacket == _gfxFrozenPhysics)
+            {
+                _lastGfxPacket = g.GraphicsPacket;
+                _gfxStillSince = now;
+                _gfxFrozenPhysics = g.PhysicsPacket;
+            }
+            bool gfxFrozen = g.Memory && g.PhysicsPacket != _gfxFrozenPhysics && now - _gfxStillSince > TimeSpan.FromMilliseconds(1500);
+
+            // The stage clock ("02:58.143") stops exactly at the finish line, while the car still rolls on.
+            // (In the pause menu the clock stops too, but so does the physics: require the physics to keep ticking.)
+            if (g.CurrentTimeMs != _clockValue) { _clockValue = g.CurrentTimeMs; _clockChangedAt = now; _clockPhysics = g.PhysicsPacket; }
+            bool clockStopped = g.CurrentTimeMs > 0 && g.SpeedKmh > 5 && now - _clockChangedAt > TimeSpan.FromMilliseconds(800)
+                                && g.PhysicsPacket - _clockPhysics > 100;
+
             if (_run != null)
             {
+                if (!_finishedAt.HasValue && (clockStopped || gfxFrozen || g.CompletedLaps > _startLaps) && _run.Points.Any(x => x.Speed > 5))
+                {
+                    _finishedAt = now;
+                    _run.StageTime = g.Clock;
+                    // drop what was recorded after the clock stopped (braking after the finish line)
+                    float cut = (float)(_clockChangedAt - _runStartUtc).TotalSeconds;
+                    lock (_gate) _run.Points.RemoveAll(x => x.T > cut);
+                    Log.Write("Stage finished (" + (clockStopped ? "clock stopped" : gfxFrozen ? "graphics stopped" : "completed laps") + ", time " + g.Clock + "): " + g.Describe());
+                }
                 string end = null;
                 if (!g.Running || !g.Memory) end = "game closed";
                 else if (g.Track.Length == 0) end = "menu";
                 else if (g.Track != _run.Track) end = "track changed";
                 else if (_lastCurTime > 5000 && g.CurrentTimeMs + 3000 < _lastCurTime) end = "restart";
-                else if (_finishedAt.HasValue && now - _finishedAt.Value > TimeSpan.FromSeconds(5)) end = "finished";
+                else if (_finishedAt.HasValue) end = "finished";
                 if (end != null) Finish(end, g);
             }
 
-            // after a finish the stage stays loaded on the results screen: wait for the menu or a reset stage clock
-            if (_waitForReset && (!onStage || g.CurrentTimeMs + 3000 < _lastCurTime)) _waitForReset = false;
+            // after a finish the stage stays loaded on the results screen: wait for the menu or a restarted stage
+            // (stage clock back near zero, graphics updating again)
+            if (_waitForReset && (!onStage || (!gfxFrozen && g.CurrentTimeMs + 3000 < _lastCurTime))) _waitForReset = false;
 
             if (_run == null)
             {
@@ -89,12 +115,8 @@ namespace MozaHud
 
             // stage name / gain: StageSwitch logs it a moment after the stage loads
             if (!_resolved && now - _runStartUtc > TimeSpan.FromSeconds(4)) Resolve();
+            if (_run.RotationDeg == 0 && rotationDeg > 0) _run.RotationDeg = rotationDeg;   // base answered after the start
 
-            if (!_finishedAt.HasValue && g.CompletedLaps > _startLaps)
-            {
-                _finishedAt = now;
-                Log.Write("Stage finished (completed laps " + _startLaps + " -> " + g.CompletedLaps + "): " + g.Describe());
-            }
             if (g.CurrentTimeMs > 0) _lastCurTime = g.CurrentTimeMs;
 
             if (now >= _nextSnapshotLog)

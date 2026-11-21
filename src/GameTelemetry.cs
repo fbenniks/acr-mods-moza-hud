@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.IO.MemoryMappedFiles;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -16,13 +17,13 @@ namespace MozaHud
         public int GraphicsPacket, PhysicsPacket;
         public int CompletedLaps, CurrentTimeMs, LastTimeMs;
         public float Distance, SpeedKmh, Steer;
-        public string Track = "", Car = "";
+        public string Track = "", Car = "", Clock = "";
 
         public string Describe()
         {
             return string.Format(CultureInfo.InvariantCulture,
-                "status {0} gfx#{1} phy#{2} laps {3} cur {4} last {5} dist {6:0} speed {7:0.0} steer {8:0.00} track '{9}' car '{10}'",
-                Status, GraphicsPacket, PhysicsPacket, CompletedLaps, CurrentTimeMs, LastTimeMs, Distance, SpeedKmh, Steer, Track, Car);
+                "status {0} gfx#{1} phy#{2} laps {3} clock '{4}' ({5} ms) dist {6:0} speed {7:0.0} steer {8:0.00} track '{9}' car '{10}'",
+                Status, GraphicsPacket, PhysicsPacket, CompletedLaps, Clock, CurrentTimeMs, Distance, SpeedKmh, Steer, Track, Car);
         }
     }
 
@@ -59,6 +60,9 @@ namespace MozaHud
                     s.CurrentTimeMs = a.ReadInt32(140);
                     s.LastTimeMs = a.ReadInt32(144);
                     s.Distance = a.ReadSingle(156);
+                    // AC Rally leaves iCurrentTime at 0 but fills the text clock ("00:12.79")
+                    s.Clock = ReadWide(a, 12, 15);
+                    if (s.CurrentTimeMs == 0) s.CurrentTimeMs = ParseClock(s.Clock);
                 }
                 using (var m = MemoryMappedFile.OpenExisting("Local\\acpmf_physics", MemoryMappedFileRights.Read))
                 using (var a = m.CreateViewAccessor(0, 64, MemoryMappedFileAccess.Read))
@@ -110,6 +114,21 @@ namespace MozaHud
                 catch (Exception ex) { sb.Append(part.Name).Append(": ").Append(ex.Message).Append("  "); }
             }
             return sb.ToString();
+        }
+
+        /// <summary>"mm:ss.xx" or "h:mm:ss.xx" to milliseconds (0 when it doesn't parse).</summary>
+        static int ParseClock(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return 0;
+            var parts = s.Split(':');
+            double total = 0;
+            foreach (var p in parts)
+            {
+                double v;
+                if (!double.TryParse(p, NumberStyles.Float, CultureInfo.InvariantCulture, out v)) return 0;
+                total = total * 60 + v;
+            }
+            return (int)Math.Min(int.MaxValue, total * 1000);
         }
 
         static string ReadWide(MemoryMappedViewAccessor a, int offset, int chars)
@@ -167,10 +186,11 @@ namespace MozaHud
                     DateTime at;
                     if (!DateTime.TryParseExact(m.Groups[1].Value, "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out at)) continue;
                     if (at < loadedAt.AddMinutes(-3) || at > loadedAt.AddMinutes(2)) return null;
-                    var parts = m.Groups[3].Value.Split(new[] { " · " }, StringSplitOptions.None);
+                    // "Monte-Carlo  ·  Sisteron  ·  Hyundai i20N Rally2"
+                    var parts = m.Groups[3].Value.Split('·').Select(p => p.Trim()).Where(p => p.Length > 0).ToArray();
                     var info = new StageInfo { Gain = int.Parse(m.Groups[2].Value), Source = "StageSwitch" };
                     if (parts.Length >= 3) { info.Stage = parts[0] + " · " + parts[1]; info.Car = string.Join(" · ", parts, 2, parts.Length - 2); }
-                    else info.Stage = m.Groups[3].Value;
+                    else info.Stage = string.Join(" · ", parts);
                     return info;
                 }
             }

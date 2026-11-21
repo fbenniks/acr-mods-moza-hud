@@ -232,7 +232,10 @@ namespace MozaHud
             if (!string.IsNullOrEmpty(run.Car)) sub.Add(run.Car);
             sub.Add(run.Start.ToString("ddd d MMM yyyy HH:mm"));
             sub.Add(StageRecorder.FormatTime(run.Points.Count > 0 ? run.Points[run.Points.Count - 1].T : 0));
-            if (item != _liveItem && !string.IsNullOrEmpty(run.EndReason)) sub.Add(run.EndReason == "finished" ? "finished" : "not finished (" + run.EndReason + ")");
+            if (item != _liveItem && !string.IsNullOrEmpty(run.EndReason))
+                sub.Add(run.EndReason == "finished"
+                    ? "finished" + (string.IsNullOrEmpty(run.StageTime) ? "" : " in " + run.StageTime.TrimStart('0').TrimStart(':'))
+                    : "not finished (" + run.EndReason + ")");
             _subtitle.Text = string.Join("   ·   ", sub);
             _advice.Set(run, a);
             _stats.Set(new[]

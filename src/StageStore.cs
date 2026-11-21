@@ -24,7 +24,7 @@ namespace MozaHud
     {
         public string FilePath;
         public DateTime Start, End;
-        public string Track = "", Stage = "", Car = "", GainSource = "", EndReason = "";
+        public string Track = "", Stage = "", Car = "", GainSource = "", EndReason = "", StageTime = "";
         public int? Gain;
         public int RotationDeg;
         public double MaxNm = 5.5;
@@ -163,6 +163,7 @@ namespace MozaHud
             sb.Append("# rotation: ").Append(run.RotationDeg.ToString(Inv)).Append('\n');
             sb.Append("# max_nm: ").Append(run.MaxNm.ToString(Inv)).Append('\n');
             sb.Append("# end_reason: ").Append(run.EndReason).Append('\n');
+            sb.Append("# stage_time: ").Append(run.StageTime).Append('\n');
             sb.Append("t,tq,tqmax,clip,lock,wheel,speed,tmot,tmos\n");
             foreach (var p in run.Points)
             {
@@ -219,6 +220,7 @@ namespace MozaHud
                             case "rotation": int.TryParse(val, NumberStyles.Integer, Inv, out run.RotationDeg); break;
                             case "max_nm": double m; if (double.TryParse(val, NumberStyles.Float, Inv, out m)) run.MaxNm = m; break;
                             case "end_reason": run.EndReason = val; break;
+                            case "stage_time": run.StageTime = val; break;
                         }
                         continue;
                     }
