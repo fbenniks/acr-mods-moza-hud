@@ -117,7 +117,8 @@ namespace MozaHud
                 AppDomain.CurrentDomain.UnhandledException += (s, e) => Log.Write("Fatal: " + e.ExceptionObject);
                 Log.Start();
                 Settings.Load();
-                Application.Run(new TrayApp(showWindow: Array.IndexOf(args, "--tray") < 0));
+                Startup.Migrate();
+                Application.Run(new TrayApp(showWindow: Array.IndexOf(args, "--tray") < 0 && !Startup.Minimized));
             }
             return 0;
         }

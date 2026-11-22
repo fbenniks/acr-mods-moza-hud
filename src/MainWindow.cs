@@ -23,6 +23,8 @@ namespace MozaHud
         readonly StageChart _chart = new StageChart();
         readonly Timer _timer = new Timer { Interval = 1000 };
         readonly object _liveItem = new object();
+        readonly CheckBox _withWindows = new CheckBox(), _startMinimized = new CheckBox();
+        bool _syncing;
         StageRun _shown;
         DateTime _nextLiveAnalysis;
 
@@ -65,14 +67,31 @@ namespace MozaHud
                 "Above it MozaHud suggests less FFB gain; under 60 % of it (1.5 % for 2.5 %) more gain,\n" +
                 "so you don't leave feel on the table. Green in between.";
             tip.SetToolTip(allow, tipText); tip.SetToolTip(allowLabel, tipText);
+            // startup options, left of the target clipping
+            _withWindows.Text = "Start with Windows";
+            _startMinimized.Text = "Start minimized";
+            foreach (var cb in new[] { _withWindows, _startMinimized })
+            {
+                cb.AutoSize = true; cb.ForeColor = Theme.Muted; cb.Font = SmallFont; cb.Cursor = Cursors.Hand;
+            }
+            tip.SetToolTip(_withWindows, "Start MozaHud when you log in to Windows.");
+            tip.SetToolTip(_startMinimized, "Start in the system tray without opening this window\n(also when starting with Windows). Double-click the tray icon to open it.");
+            SyncStartup();
+            _withWindows.CheckedChanged += (s, e) => { if (!_syncing) Startup.SetWithWindows(_withWindows.Checked); };
+            _startMinimized.CheckedChanged += (s, e) => { if (!_syncing) Startup.SetMinimized(_startMinimized.Checked); };
+            Startup.Changed += OnStartupChanged;
+            Activated += (s, e) => SyncStartup();
             Action placeAllow = () =>
             {
                 pct.Location = new Point(header.Width - 16 - pct.Width, 20);
                 allow.Location = new Point(pct.Left - 2 - allow.Width, 16);
                 allowLabel.Location = new Point(allow.Left - 6 - allowLabel.Width, 21);
-                _status.Width = _base.Width = Math.Max(100, allowLabel.Left - 150);
+                int cbLeft = allowLabel.Left - 24 - Math.Max(_withWindows.Width, _startMinimized.Width);
+                _withWindows.Location = new Point(cbLeft, 8);
+                _startMinimized.Location = new Point(cbLeft, 30);
+                _status.Width = _base.Width = Math.Max(100, cbLeft - 150);
             };
-            header.Controls.AddRange(new Control[] { logo, _status, _base, allowLabel, allow, pct });
+            header.Controls.AddRange(new Control[] { logo, _status, _base, _withWindows, _startMinimized, allowLabel, allow, pct });
             header.Resize += (s, e) => placeAllow();
             Load += (s, e) => placeAllow();
             _status.Anchor = _base.Anchor = AnchorStyles.Left | AnchorStyles.Top;
@@ -279,9 +298,23 @@ namespace MozaHud
             ShowSelected(false);
         }
 
+        void OnStartupChanged()
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) BeginInvoke((Action)SyncStartup); else SyncStartup();
+        }
+
+        void SyncStartup()
+        {
+            _syncing = true;
+            _withWindows.Checked = Startup.WithWindows;
+            _startMinimized.Checked = Startup.Minimized;
+            _syncing = false;
+        }
+
         protected override void Dispose(bool disposing)
         {
-            if (disposing) Settings.Changed -= OnSettingsChanged;
+            if (disposing) { Settings.Changed -= OnSettingsChanged; Startup.Changed -= OnStartupChanged; }
             base.Dispose(disposing);
         }
 

@@ -17,7 +17,6 @@ namespace MozaHud
     public sealed class TrayApp : ApplicationContext
     {
         const int TempEveryMs = 2000, PublishEveryMs = 100, UiEveryMs = 1000, RetryMs = 5000, TempStaleMs = 6000;
-        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
         readonly NotifyIcon _tray = new NotifyIcon();
         readonly ToolStripMenuItem _status = new ToolStripMenuItem("Starting…") { Enabled = false };
@@ -25,6 +24,7 @@ namespace MozaHud
         readonly ToolStripMenuItem _setup = new ToolStripMenuItem("Set up Afterburner…");
         readonly ToolStripMenuItem _release = new ToolStripMenuItem("Release COM port (for Pit House)");
         readonly ToolStripMenuItem _autostart = new ToolStripMenuItem("Start with Windows");
+        readonly ToolStripMenuItem _minimized = new ToolStripMenuItem("Start minimized (tray only)");
         readonly SynchronizationContext _ui;
         readonly Thread _worker;
         readonly StageRecorder _recorder = new StageRecorder();
@@ -45,7 +45,8 @@ namespace MozaHud
             _tray.DoubleClick += (s, e) => ShowWindow();
             _setup.Click += (s, e) => RunSetup("--setup");
             _release.Click += (s, e) => { _paused = !_paused; _release.Checked = _paused; };
-            _autostart.Click += (s, e) => SetAutostart(!_autostart.Checked);
+            _autostart.Click += (s, e) => Startup.SetWithWindows(!_autostart.Checked);
+            _minimized.Click += (s, e) => Startup.SetMinimized(!_minimized.Checked);
             var remove = new ToolStripMenuItem("Remove Afterburner setup…");
             remove.Click += (s, e) => RunSetup("--uninstall");
             var exit = new ToolStripMenuItem("Exit");
@@ -53,7 +54,7 @@ namespace MozaHud
 
             var menu = new ContextMenuStrip();
             menu.Items.AddRange(new ToolStripItem[] { open, new ToolStripSeparator(), _status, _status2, new ToolStripSeparator(),
-                _setup, _release, _autostart, new ToolStripSeparator(), remove, exit });
+                _setup, _release, _autostart, _minimized, new ToolStripSeparator(), remove, exit });
             menu.Opening += (s, e) => RefreshMenu();
             _tray.ContextMenuStrip = menu;
             SetIcon(null, "MozaHud");
@@ -96,7 +97,8 @@ namespace MozaHud
         {
             bool done = AfterburnerSetup.CfgHasSources();
             _setup.Text = done ? "Set up Afterburner (done — redo…)" : "Set up Afterburner…";
-            _autostart.Checked = AutostartEnabled();
+            _autostart.Checked = Startup.WithWindows;
+            _minimized.Checked = Startup.Minimized;
             _release.Checked = _paused;
         }
 
@@ -375,23 +377,6 @@ namespace MozaHud
             p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
             p.CloseFigure();
             return p;
-        }
-
-        // ---------------- start with Windows ----------------
-
-        static bool AutostartEnabled()
-        {
-            using (var k = Registry.CurrentUser.OpenSubKey(RunKey))
-                return k != null && k.GetValue("MozaHud") != null;
-        }
-
-        static void SetAutostart(bool on)
-        {
-            using (var k = Registry.CurrentUser.CreateSubKey(RunKey))
-            {
-                if (on) k.SetValue("MozaHud", "\"" + Application.ExecutablePath + "\" --tray");
-                else k.DeleteValue("MozaHud", false);
-            }
         }
 
         protected override void ExitThreadCore()

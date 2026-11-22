@@ -125,7 +125,8 @@ Optional: AC Rally StageSwitch, and MSI Afterburner with RivaTuner for the overl
    Windows may warn that it's from an unknown publisher (it isn't signed) — choose *More info → Run anyway*.
 2. **Run it.** The MozaHud window opens and an icon appears in the system tray showing your motor temperature.
 3. **Drive a stage.** That's it — the stage shows up in the list when you cross the finish.
-4. Optional: right-click the tray icon → **Start with Windows**.
+4. Optional: tick **Start with Windows** and/or **Start minimized** (top right of the window, or right-click the
+   tray icon). Start minimized opens MozaHud in the tray only, so it doesn't pop up when Windows starts.
 
 Closing the window keeps MozaHud running in the tray; double-click the tray icon to open it again.
 
