@@ -11,7 +11,7 @@ MSI Afterburner / RivaTuner.
 > I'm not affiliated with MOZA Racing, the makers of Assetto Corsa Rally, MSI, RivaTuner or anyone else, and I'm not
 > paid or sponsored by anyone. See [Disclaimer](#disclaimer).
 
-![MozaHud after a stage on Monte-Carlo · Sisteron](docs/images/overview-too-strong.png)
+![MozaHud after Loutraki – Aghii Theodori, showing the gain recommendation, clipping figures and stage graphs](docs/images/overview-too-strong.png)
 
 ---
 
@@ -31,62 +31,77 @@ for every stage you drive and gives you a number to set.
 
 ### Every stage recorded, automatically
 
-Start a stage in AC Rally and MozaHud starts recording; cross the finish and it stops — no buttons. Each run gets the
-rally's flag, the car's logo, the date and your stage time. The last 100 runs are kept.
+Start a stage in AC Rally and MozaHud starts recording automatically. Each saved run shows the rally's flag,
+the car's logo, the date and your stage time. MozaHud keeps up to 100 runs for up to 60 days.
 
 ![Stage list with flags and car logos](docs/images/stage-list.png)
 
 ### A clear verdict after each stage
 
-Red means the motor was at its limit too often and you should lower the gain — MozaHud suggests the exact value.
+MozaHud compares **counted clipping** with your target. With the default **Balanced** rule, the green zone is
+**0.6–1.0%** of driving time. The analysis uses time at 5 km/h and above, with time at the wheel's rotation limit excluded.
 
-![Too strong: lower the FFB gain, 150 → 135](docs/images/advice-too-strong.png)
+**Red or amber advice** means counted clipping is above target. On Loutraki – Aghii Theodori, the run at gain
+**200** had **2.7%** counted clipping. MozaHud suggests **181**, with an estimated **0.8%**.
 
-Green means you're good. Blue means the opposite of red: the motor hardly reached its limit, so you're leaving feel on
-the table, and MozaHud suggests a higher gain. It works out the exact value (in steps of 1) from the torque of that
-run, so the next run lands just under your target.
+![Red advice to lower FFB gain from 200 to 181](docs/images/advice-too-strong.png)
 
-![Good: the FFB gain fits this stage](docs/images/advice-good.png)
+**Green advice** means you can keep the gain. On Hafren South, **0.7%** counted clipping falls in the Balanced
+zone even though all clipping totals **2.7%**.
 
-Not every clip counts. A lone spike on a kerb or bump only cuts the top off one hit, and you hardly feel it. Many clips
-close together, or one long clip, keep the force flat for a whole stretch, and that's where you lose the road. So
-MozaHud counts **long clips** (by default longer than 0.20 s) and **bursts** of spikes (at least 3 clips within
-2.00 s), with a target of 1 % of the driving time (green from 0.6 % up to it). On a 6-minute stage, 1 % is 3.6 s
-of counted clipping in all: about a dozen short flat moments spread over the stage. In the graph, counted clipping is
-red and lone spikes are amber.
+![Green advice to keep the gain on Hafren South with 0.7% counted clipping](docs/images/advice-good.png)
 
-The rule is up to you: the **Clipping rule** button (top right) opens the settings. You set the spike length, the
-burst, how much heavier a long clip counts than a burst, and the target, or pick a preset: *Very little spiking*, *Balanced* (the default), *Aggressive* or *High gain*.
-A picture drawn from your values shows what counts, another shows what the target means in seconds on your last
-stage, and your recent runs are judged live while you change it.
+**Blue advice** means there's room for more force. On Sisteron, **0.4%** counted clipping leaves room to go from
+**165** to **169**. MozaHud needs at least a minute of driving to suggest a higher gain. It recommends changes
+in whole gain points and estimates their effect from the recorded torque.
 
-![Clipping settings: what counts, the rule, and recent runs judged live](docs/images/clip-settings.png)
+![Blue advice to raise FFB gain from 165 to 169](docs/images/advice-raise.png)
 
-![Header with live values and the Allowed clipping setting](docs/images/header.png)
+### Choose which clipping counts
+
+Click **Clipping rule** at the top right. Choose **Very little spiking**, **Balanced** (the default),
+**Aggressive** or **High gain**, or set your own spike length, burst size and window, long-clip weight and target.
+
+![MozaHud header with live wheelbase readings, startup options and the Clipping rule button](docs/images/header.png)
+
+With **Balanced**:
+
+- A clip up to **0.20 s** is a spike. It counts only if it's part of a burst of **at least 3 clips within
+  2.00 s**, measured from the start of the first clip to the end of the last.
+- A longer clip always counts at **1.5×** its duration. For example, a **0.30 s** clip adds **0.45 s** to the
+  counted total. Spikes in a burst count at their actual duration.
+- The target is **1.0%** of driving time. On the **6:26** of driving shown below, that's about **3.9 s** of
+  counted clipping after applying the long-clip weight.
+
+As you edit the rule, the dialog redraws the example, translates the target into seconds for your latest run
+and previews how the rule would judge your recent runs. Click **Save** to apply it.
+
+![Clipping settings showing the Balanced rule, all four presets, the target in seconds and recent run verdicts](docs/images/clip-settings.png)
 
 ### See exactly where it clipped
 
-The torque graph shows the force on your wheel over the whole stage. Every moment the motor hit its limit gets a
-**red bar** — so you can see whether it's a few bumps or the whole hairpin section. Scroll to zoom in, hover for the
-details of that moment.
+The torque graph shows the force on your wheel over the whole stage. **Green** is normal torque, **red** is
+clipping that counts toward the verdict, and **amber** marks isolated spikes that the rule leaves out. Scroll
+to zoom, drag to move along the timeline, double-click to reset the view, and hover for details.
 
-![A whole stage: force on the wheel, red where it clipped](docs/images/graph-whole-stage.png)
+![Whole-stage torque and temperature graphs, with counted clipping in red and isolated spikes in amber](docs/images/graph-whole-stage.png)
 
-![Zoomed in: red bars where the motor hit its limit](docs/images/graph-zoom-clipping.png)
+![Zoomed torque graph showing isolated amber spikes followed by a red burst of counted clipping](docs/images/graph-zoom-clipping.png)
 
-Turning the wheel all the way to its end (the **soft lock**) also makes the motor push at full force — that's not
-your FFB clipping, so MozaHud shows it in **grey** and leaves it out of the verdict. It knows your base's rotation
-(e.g. 450°) by asking the base itself.
+The **soft lock** is where the motor pushes back when you turn the wheel to its rotation limit. MozaHud reads
+that limit from the base, shows soft lock in **grey**, and leaves it out of the verdict.
 
 ### The numbers that matter
 
-Clipping share, the **longest** clipping moment, the **average** length and how many there were, average and
-strongest force, soft-lock time and temperatures. Hover over any ⓘ for an explanation.
+**Counted clipping** drives the gain advice. **All clipping** shows the actual share of driving time spent at
+the limit, including isolated spikes. The tiles also show the longest clip, average clip length and number of
+clips, torque, soft-lock time, temperatures and gain.
 
-![Key figures](docs/images/key-figures.png)
+![Key figures for Loutraki, including 2.7% counted clipping, 4.5% all clipping and a longest clip of 0.30 s](docs/images/key-figures.png)
 
-Example from the stages above: at gain 150 the R5 clipped 5.4 % of the time, 49 times, the longest for half a second.
-At 135 that dropped to 2.3 %, 21 short taps of about 0.14 s — the force detail was back, and the verdict turned green.
+New recordings keep the individual torque readings, so MozaHud measures clip lengths to about **0.03 s**.
+Older recordings use the current clipping rule with their original **0.1 s** peak readings. If a recording
+repeatedly exceeded its saved torque limit, MozaHud uses the highest peak outside soft lock as its limit.
 
 ### Motor temperatures
 
@@ -95,10 +110,10 @@ working hard.
 
 ### One click to save it in StageSwitch
 
-If you use **[AC Rally StageSwitch](https://github.com/fbenniks/acr-mods-stageswitch)** (the companion app that sets the FFB gain per
-stage automatically), MozaHud can send it the suggested gain. You choose where it applies: just this car on this
-stage, this car on the whole rally, this stage for every car, or the whole rally for every car. Next time you load
-that stage, it's set.
+Keep both apps open, select a run with a suggested gain, and click **Apply in StageSwitch…**. You can adjust
+the value in the dialog and save it for this car on this stage, this car across the rally, the stage default,
+or every stage default in the rally. StageSwitch uses the saved gain when you load a matching stage. It can also
+apply it while you're on that stage. [AC Rally StageSwitch](https://github.com/fbenniks/acr-mods-stageswitch)
 
 ![Apply in StageSwitch: four choices](docs/images/apply-in-stageswitch.png)
 
@@ -113,9 +128,10 @@ MozaHud adds your wheelbase to it, in any game — not just AC Rally:
 | MOZA torque avg | The force on the wheel right now (Nm) |
 | MOZA torque peak | The strongest force in the last second (Nm) |
 | MOZA FFB load | That peak as % of what the base can do — 100 % means it's at the limit |
-| MOZA clipping | How much of the last second it was at the limit (%) |
+| MOZA clipping | How much of the last second the motor was at the limit (%) |
 
-You place and style them like any other Afterburner value: graph, number, colour, alarm.
+The clipping rule is for stage advice. The live overlay reports clipping over the last second. You can place
+and style the readings like any other Afterburner value: graph, number, colour, alarm.
 <!-- Overlay screenshot: save an in-game screenshot as docs/images/overlay-ingame.png and add:
 ![MozaHud values in the RivaTuner overlay](docs/images/overlay-ingame.png) -->
 
