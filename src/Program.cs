@@ -69,12 +69,13 @@ namespace MozaHud
             if (arg == "--advice")
             {
                 Settings.Load();
+                Console.WriteLine("Clipping rule: " + Settings.Rule.Describe() + ", target " + Settings.Rule.TargetPct.ToString("0.0") + " %");
                 foreach (var run in StageStore.List())
                 {
                     StageStore.EnsurePoints(run);
                     var a = run.Analyse();
                     Console.WriteLine(run.Start.ToString("yyyy-MM-dd HH:mm") + "  " + run.Title + "  ·  " + run.Car + "  ·  gain " + (run.Gain.HasValue ? run.Gain.ToString() : "?"));
-                    Console.WriteLine("  " + a.Verdict + ": clipping " + a.ClipPct.ToString("0.00") + " %" +
+                    Console.WriteLine("  " + a.Verdict + ": counted clipping " + a.CountedPct.ToString("0.00") + " % (all " + a.ClipPct.ToString("0.00") + " %)" +
                         (a.ChangePct != 0 ? "  →  " + (a.SuggestedGain.HasValue ? a.SuggestedGain.ToString() : a.ChangePct.ToString("+0;-0") + " %") +
                                             " (about " + a.PredictedPct.ToString("0.00") + " %" + (a.Capped ? ", capped" : "") + ")" : ""));
                     Console.WriteLine("  " + a.Headline + " | " + a.Detail + (a.Hint == "" ? "" : " | " + a.Hint));
@@ -98,6 +99,16 @@ namespace MozaHud
                 var run = ImportTorqueLog(args[1]);
                 StageStore.Save(run);
                 Console.WriteLine("Saved " + run.FilePath + " (" + run.Points.Count + " points)");
+                return 0;
+            }
+
+            // Only the clipping settings window (for trying it next to a running MozaHud, which reloads settings at start).
+            if (arg == "--clip-settings")
+            {
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                Settings.Load();
+                using (var dlg = new ClipSettingsDialog(null) { StartPosition = FormStartPosition.CenterScreen, ShowInTaskbar = true }) dlg.ShowDialog();
                 return 0;
             }
 
@@ -147,7 +158,7 @@ namespace MozaHud
                 {
                     next += 100;
                     var b = win.TakeBucket();
-                    run.Points.Add(new StagePoint { T = ms / 1000f, Tq = (float)b.SmoothNm, TqMax = (float)b.MaxRawNm, Clip = b.Clipped > 0, Speed = 50, TMot = 25 + ms / 20000f, TMos = 30 + ms / 15000f });
+                    run.Points.Add(new StagePoint { T = ms / 1000f, Tq = (float)b.SmoothNm, TqMax = (float)b.MaxRawNm, Samples = b.Raw, Clip = b.Clipped > 0, Speed = 50, TMot = 25 + ms / 20000f, TMos = 30 + ms / 15000f });
                 }
             }
             run.End = run.Start.AddSeconds(run.Points.Count / 10.0);

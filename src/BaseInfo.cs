@@ -143,15 +143,26 @@ namespace MozaHud
             Samples++;
         }
 
-        /// <summary>The plateau value in Nm, or null when there isn't a clear one (yet).</summary>
+        /// <summary>Readings needed before judging (about a minute at 35–40 readings per second).</summary>
+        public const int MinSamples = 2000;
+
+        /// <summary>
+        /// The plateau value in Nm, or null when there isn't a clear one (yet): the highest value hit at least 10 times,
+        /// hit at least 3 times as often as the value below it, and with (almost) no readings above it — the torque
+        /// can't go past a real ceiling. On 2026-11-22 the last condition was missing: 87 s into a stage, 4.4 Nm was hit
+        /// often enough while every value from 4.5 to 5.5 Nm had under 10 hits each (but many together), and MozaHud
+        /// judged a whole afternoon against a 4.4 Nm "ceiling" on a base that clips at 5.5 Nm.
+        /// </summary>
         public double? Plateau()
         {
-            for (int v = 1000; v > 10; v--)
-            {
-                if (_counts[v] < 10) continue;   // the highest value that occurs often
-                return _counts[v] >= 3 * Math.Max(1, _counts[v - 1]) ? v / 10.0 : (double?)null;
-            }
-            return null;
+            if (Samples < MinSamples) return null;
+            int top = -1;
+            for (int v = 1000; v > 10; v--) if (_counts[v] >= 10) { top = v; break; }
+            if (top < 0) return null;
+            int above = 0;
+            for (int v = top + 1; v <= 1000; v++) above += _counts[v];
+            if (above > Math.Max(2, _counts[top] / 50)) return null;   // the torque went past it: not a ceiling
+            return _counts[top] >= 3 * Math.Max(1, _counts[top - 1]) ? top / 10.0 : (double?)null;
         }
     }
 }

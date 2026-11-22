@@ -21,6 +21,8 @@ namespace MozaHud
         public static readonly Color Bad = Color.FromArgb(232, 72, 72);
         public static readonly Color Warn = Color.FromArgb(240, 180, 40);
         public static readonly Color Blue = Color.FromArgb(90, 160, 255);
+        public static readonly Color TorqueOk = Color.FromArgb(72, 199, 116);    // torque under the limit (green: all good)
+        public static readonly Color LoneClip = Color.FromArgb(240, 180, 40);    // clipped, but not counted by the clipping rule (amber)
         public static readonly Color Grid = Color.FromArgb(40, 44, 54);
         public static readonly Color Track = Color.FromArgb(60, 65, 80);
 
@@ -59,6 +61,8 @@ namespace MozaHud
     {
         List<StagePoint> _pts = new List<StagePoint>();
         double _maxNm = 5.5;
+        bool[] _counted;   // per point: clipping that counts by the clipping rule (null: all clipping counts)
+        bool[] _clipped;   // per point: hit the limit (from the analysis; null: the saved flags)
         double _viewFrom, _viewTo = 10;   // seconds
         int _hoverX = -1;
         int _dragX = -1; double _dragFrom, _dragTo;
@@ -77,13 +81,15 @@ namespace MozaHud
         /// newRun: show the whole run. Otherwise (live updates of the same run) the view follows the end when it was
         /// showing the end: the whole run stays whole, a zoomed view scrolls along.
         /// </summary>
-        public void SetData(List<StagePoint> pts, double maxNm, bool newRun)
+        public void SetData(List<StagePoint> pts, double maxNm, bool newRun, bool[] clipped = null, bool[] counted = null)
         {
             double prevEnd = End;
             bool atEnd = _viewTo >= prevEnd - 0.5;
             bool whole = _viewFrom <= 0.01 && atEnd;
             _pts = pts ?? new List<StagePoint>();
             _maxNm = maxNm;
+            _counted = counted != null && counted.Length == _pts.Count ? counted : null;
+            _clipped = clipped != null && clipped.Length == _pts.Count ? clipped : null;
             double end = End;
             if (newRun || whole) { _viewFrom = 0; _viewTo = end; }
             else if (atEnd) { double span = _viewTo - _viewFrom; _viewTo = end; _viewFrom = Math.Max(0, end - span); }
@@ -123,7 +129,7 @@ namespace MozaHud
             // ---- per-pixel-column aggregation of the visible points ----
             int cols = tr.Width;
             var tq = new float[cols]; var tqMax = new float[cols]; var mot = new float[cols]; var mos = new float[cols];
-            var clip = new bool[cols]; var lockc = new bool[cols]; var lockClip = new bool[cols]; var has = new bool[cols];
+            var clip = new bool[cols]; var lone = new bool[cols]; var lockc = new bool[cols]; var lockClip = new bool[cols]; var has = new bool[cols];
             int i0 = Math.Max(0, LowerBound(_viewFrom) - 1);
             for (int i = i0; i < _pts.Count; i++)
             {
@@ -136,8 +142,9 @@ namespace MozaHud
                 tqMax[c] = Math.Max(tqMax[c], p.TqMax);
                 if (p.TMot > 0) mot[c] = Math.Max(mot[c], p.TMot);
                 if (p.TMos > 0) mos[c] = Math.Max(mos[c], p.TMos);
-                if (p.Lock) { lockc[c] = true; if (p.Clip) lockClip[c] = true; }
-                else if (p.Clip) clip[c] = true;
+                bool pc = _clipped != null ? _clipped[i] : p.Clip;
+                if (p.Lock) { lockc[c] = true; if (pc) lockClip[c] = true; }
+                else if (pc) { if (_counted == null || _counted[i]) clip[c] = true; else lone[c] = true; }
             }
 
             // ---- torque ----
@@ -146,10 +153,11 @@ namespace MozaHud
             DrawFrame(g, tr, 0, yMax, _maxNm > 14 ? 5 : _maxNm > 7 ? 2 : 1, "Nm");
             using (var lockBrush = new SolidBrush(Color.FromArgb(46, 140, 150, 170)))
                 for (int c = 0; c < cols; c++) if (lockc[c]) g.FillRectangle(lockBrush, tr.Left + c, tr.Top, 1, tr.Height);
-            // per column: 0 normal (orange), 1 clipping (red), 2 at the soft lock (grey) — same colours as the marks on top
+            // per column: 0 normal (green), 1 counted clipping (red), 2 at the soft lock (grey), 3 lone clip not counted
+            // by the clipping rule (amber) — same colours as the marks on top
             // exactly the columns whose 100 ms points clipped / were at the soft lock (no widening)
             var state = new int[cols];
-            for (int c = 0; c < cols; c++) state[c] = lockc[c] ? 2 : clip[c] ? 1 : 0;
+            for (int c = 0; c < cols; c++) state[c] = lockc[c] ? 2 : clip[c] ? 1 : lone[c] ? 3 : 0;
             float pointPx = (float)(cols / ((_viewTo - _viewFrom) * 10));   // width of one 100 ms point
             DrawTorque(g, tq, tqMax, has, state, cols, tr.Left, ty, tr.Bottom, Math.Max(1.5f, pointPx));
             using (var pen = new Pen(Theme.Bad, 1f) { DashStyle = DashStyle.Dash })
@@ -159,14 +167,20 @@ namespace MozaHud
                 using (var b = new SolidBrush(Theme.Bad)) g.DrawString("limit " + _maxNm.ToString("0.0") + " Nm", Small, b, tr.Right - 78, tr.Top - 19);
             }
             using (var clipBrush = new SolidBrush(Theme.Bad))
+            using (var loneBrush = new SolidBrush(StateColors[3]))
             using (var lockClipBrush = new SolidBrush(StateColors[2]))
                 for (int c = 0; c < cols; c++)
                 {
                     if (clip[c]) g.FillRectangle(clipBrush, tr.Left + c, tr.Top, 1.5f, 7);
+                    else if (lone[c]) g.FillRectangle(loneBrush, tr.Left + c, tr.Top, 1.5f, 7);
                     else if (lockClip[c]) g.FillRectangle(lockClipBrush, tr.Left + c, tr.Top, 1.5f, 7);
                 }
-            DrawLegend(g, tr, new[] { "Torque", "Raw peaks", "Clipping", "Soft lock" },
-                new[] { Theme.Accent, Color.FromArgb(110, Theme.Accent), Theme.Bad, StateColors[2] });
+            if (_counted == null)
+                DrawLegend(g, tr, new[] { "Torque", "Raw peaks", "Clipping", "Soft lock" },
+                    new[] { Theme.TorqueOk, Color.FromArgb(110, Theme.TorqueOk), Theme.Bad, StateColors[2] });
+            else
+                DrawLegend(g, tr, new[] { "Torque", "Raw peaks", "Clipping (counted)", "Lone spike (not counted)", "Soft lock" },
+                    new[] { Theme.TorqueOk, Color.FromArgb(110, Theme.TorqueOk), Theme.Bad, StateColors[3], StateColors[2] });
 
             // ---- temperatures ----
             float lo = float.MaxValue, hi = float.MinValue;
@@ -250,11 +264,12 @@ namespace MozaHud
             }
         }
 
-        static readonly Color[] StateColors = { Theme.Accent, Theme.Bad, Color.FromArgb(150, 160, 178) };
+        /// <summary>Torque states: normal, counted clipping, soft lock, lone clip (not counted by the clipping rule).</summary>
+        public static readonly Color[] StateColors = { Theme.TorqueOk, Theme.Bad, Color.FromArgb(150, 160, 178), Theme.LoneClip };
 
         /// <summary>
-        /// Raw-peak band (orange) with a red/grey bar exactly where a 100 ms point clipped / was at the soft lock,
-        /// from the bottom up to that point's raw peak; then the smoothed torque line, which is red/grey only between
+        /// Raw-peak band (green) with a red/amber/grey bar exactly where a 100 ms point clipped (counted / lone) or was at the soft lock,
+        /// from the bottom up to that point's raw peak; then the smoothed torque line, which is red/amber/grey only between
         /// two consecutive points that both clipped / were at the soft lock. Nothing next to them is coloured.
         /// </summary>
         static void DrawTorque(Graphics g, float[] tq, float[] tqMax, bool[] has, int[] state, int cols, int x0,
@@ -271,19 +286,21 @@ namespace MozaHud
 
             using (var clipBar = new SolidBrush(Color.FromArgb(190, StateColors[1])))
             using (var lockBar = new SolidBrush(Color.FromArgb(150, StateColors[2])))
+            using (var loneBar = new SolidBrush(Color.FromArgb(190, StateColors[3])))
                 for (int c = 0; c < cols; c++)
                 {
                     if (!has[c] || state[c] == 0) continue;
                     float top = y(tqMax[c]);
-                    g.FillRectangle(state[c] == 1 ? clipBar : lockBar, x0 + c - barW / 2, top, barW, baseY - top);
+                    g.FillRectangle(state[c] == 1 ? clipBar : state[c] == 3 ? loneBar : lockBar, x0 + c - barW / 2, top, barW, baseY - top);
                 }
 
-            // line: runs of segments with the same colour; a segment is red/grey only if both ends are
+            // line: runs of segments with the same colour; a segment is red/amber/grey only if both ends are
             var pens = new[]
             {
                 new Pen(StateColors[0], 1.6f) { LineJoin = LineJoin.Round },
                 new Pen(StateColors[1], 2.2f) { LineJoin = LineJoin.Round },
                 new Pen(StateColors[2], 2f) { LineJoin = LineJoin.Round },
+                new Pen(StateColors[3], 2f) { LineJoin = LineJoin.Round },
             };
             try
             {
@@ -341,7 +358,7 @@ namespace MozaHud
                 StageRecorder.FormatTime(p.T) + "   " + p.Speed.ToString("0") + " km/h",
                 "Torque " + Math.Abs(p.Tq).ToString("0.0") + " Nm   peak " + p.TqMax.ToString("0.0") + " Nm",
                 "Wheel " + (p.Wheel * 100).ToString("0") + " %" + (p.Lock ? "  (soft lock)" : ""),
-                p.Clip && !p.Lock ? "CLIPPING: a raw peak hit the limit in this 0.1 s" : null,
+                (_clipped != null ? _clipped[i] : p.Clip) && !p.Lock ? (_counted == null || _counted[i] ? "CLIPPING: a raw peak hit the limit in this 0.1 s" : "Lone spike: hit the limit, but not counted by the clipping rule") : null,
                 "Motor " + p.TMot.ToString("0.0") + " °C   MOSFET " + p.TMos.ToString("0.0") + " °C",
             };
             var size = new SizeF(0, 0);

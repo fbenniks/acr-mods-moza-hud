@@ -145,32 +145,93 @@ namespace MozaHud
             } while (DateTime.UtcNow < until);
         }
 
-        // Frames: 7E, len, group, device, payload(len), checksum.
+        // Frames: 7E, len, group, device, payload(len), checksum. Inside a frame the base sends a 0x7E byte twice (7E 7E);
+        // a single 7E always starts a frame. Found 2026-11-22: the torque reply for +2.3 Nm (raw 523) has checksum 7E,
+        // and before this was undone, each one made the parser read the doubled 7E as a new frame with length 7E and
+        // swallow the next ~0.4 s of replies (7–11 % of the torque readings on a stage were lost).
+
+        /// <summary>Result of <see cref="TakeFrame"/>.</summary>
+        public enum Take { NeedMore, Frame, Broken }
+
+        /// <summary>
+        /// Reads the frame starting at buf[i] (a 7E), undoing doubled 7E bytes. frame = len, group, device,
+        /// payload, checksum (without the start byte); next = index after it. Broken: a lone 7E (a new frame) came
+        /// before this one was complete; next is that 7E.
+        /// </summary>
+        public static Take TakeFrame(IList<byte> buf, int i, out byte[] frame, out int next)
+        {
+            frame = null; next = i;
+            var f = new List<byte>(16);
+            int j = i + 1, need = -1;
+            while (need < 0 || f.Count < need)
+            {
+                if (j >= buf.Count) return Take.NeedMore;
+                byte b = buf[j];
+                if (b == Start)
+                {
+                    if (j + 1 >= buf.Count) return Take.NeedMore;   // can't tell yet: doubled, or a new frame
+                    if (buf[j + 1] != Start) { next = j; return Take.Broken; }
+                    f.Add(Start); j += 2;
+                }
+                else { f.Add(b); j++; }
+                if (need < 0) need = f[0] + 4;   // len, group, device, payload(len), checksum
+            }
+            frame = f.ToArray(); next = j;
+            return Take.Frame;
+        }
+
+        /// <summary>The checksum the frame should have: (13 + 7E + every byte before the checksum) % 256.</summary>
+        public static byte CheckSumOf(byte[] frame)
+        {
+            int sum = Magic + Start;
+            for (int k = 0; k < frame.Length - 1; k++) sum += frame[k];
+            return (byte)(sum & 0xFF);
+        }
+
+        int _frames, _badSums, _broken;
+
         void Parse()
         {
             int i = 0;
             while (i < _buf.Count)
             {
                 if (_buf[i] != Start) { i++; continue; }
-                if (i + 1 >= _buf.Count) break;
-                int total = _buf[i + 1] + 5;
-                if (i + total > _buf.Count) break;   // wait for the rest
-                bool fromBase = _buf[i + 3] == 0x31;
-                if (fromBase && _buf[i + 1] == 3 && (_buf[i + 2] == (ReadGroup | 0x80) || _buf[i + 2] == (SettingsGroup | 0x80)))
+                byte[] f; int next;
+                var r = TakeFrame(_buf, i, out f, out next);
+                if (r == Take.NeedMore) break;
+                i = next;
+                if (r == Take.Broken) { if (++_broken <= 5) Log.Write("Frame cut off by a new frame (" + _broken + ")"); continue; }
+                _frames++;
+                if (CheckSumOf(f) != f[f.Length - 1])
                 {
-                    int raw = (_buf[i + 5] << 8) | _buf[i + 6];
-                    if (raw >= 32768) raw -= 65536;
-                    if (_buf[i + 2] == (ReadGroup | 0x80) && OnValue != null) OnValue(_buf[i + 4], raw);
-                    else if (_buf[i + 2] == (SettingsGroup | 0x80) && OnSetting != null) OnSetting(_buf[i + 4], raw);
+                    if (++_badSums <= 5)
+                        Log.Write(string.Format("Frame checksum mismatch, dropped ({0} of {1} frames): 7E {2}(expected {3:X2})",
+                            _badSums, _frames, BitConverter.ToString(f).Replace('-', ' ') + " ", CheckSumOf(f)));
+                    continue;
                 }
-                else if (fromBase && (_buf[i + 2] & 0x80) != 0 && _buf[i + 2] != 0x8E && OnFrame != null)   // 0x0E = debug text
-                {
-                    var payload = _buf.GetRange(i + 4, _buf[i + 1]).ToArray();
-                    OnFrame((byte)(_buf[i + 2] & 0x7F), payload);
-                }
-                i += total;
+                Handle(f);
             }
             _buf.RemoveRange(0, Math.Min(i, _buf.Count));
+        }
+
+        void Handle(byte[] f)
+        {
+            byte len = f[0], group = f[1];
+            bool fromBase = f[2] == 0x31;
+            if (!fromBase) return;
+            if (len == 3 && (group == (ReadGroup | 0x80) || group == (SettingsGroup | 0x80)))
+            {
+                int raw = (f[4] << 8) | f[5];
+                if (raw >= 32768) raw -= 65536;
+                if (group == (ReadGroup | 0x80)) { if (OnValue != null) OnValue(f[3], raw); }
+                else if (OnSetting != null) OnSetting(f[3], raw);
+            }
+            else if ((group & 0x80) != 0 && group != 0x8E && OnFrame != null)   // 0x0E = debug text
+            {
+                var payload = new byte[len];
+                Array.Copy(f, 3, payload, 0, len);
+                OnFrame((byte)(group & 0x7F), payload);
+            }
         }
 
         public void Dispose()
@@ -225,18 +286,24 @@ namespace MozaHud
             _bMax = Math.Max(_bMax, Math.Abs(nm));
             _bCount++;
             if (Math.Abs(nm) >= MaxNm - ClipMargin) _bClipped++;
+            _bRaw.Add((byte)Math.Min(255, Math.Abs(raw - MozaLink.TorqueZero)));
         }
 
         // Accumulators for the stage recorder (reset by TakeBucket).
         double _bMax; int _bCount, _bClipped;
+        readonly List<byte> _bRaw = new List<byte>();
 
-        public struct Bucket { public int Samples, Clipped; public double MaxRawNm, SmoothNm; }
+        /// <summary>
+        /// One recorder point: sample count, clipped samples, highest raw |Nm|, current smoothed (signed), and every
+        /// raw sample in order as |torque| in 0.1 Nm steps (so clip lengths can be measured per sample, not per point).
+        /// </summary>
+        public struct Bucket { public int Samples, Clipped; public double MaxRawNm, SmoothNm; public byte[] Raw; }
 
-        /// <summary>What happened since the previous call: sample count, clipped samples, highest raw |Nm|, current smoothed (signed).</summary>
+        /// <summary>What happened since the previous call.</summary>
         public Bucket TakeBucket()
         {
-            var b = new Bucket { Samples = _bCount, Clipped = _bClipped, MaxRawNm = _bMax, SmoothNm = _ema };
-            _bMax = 0; _bCount = 0; _bClipped = 0;
+            var b = new Bucket { Samples = _bCount, Clipped = _bClipped, MaxRawNm = _bMax, SmoothNm = _ema, Raw = _bRaw.ToArray() };
+            _bMax = 0; _bCount = 0; _bClipped = 0; _bRaw.Clear();
             return b;
         }
 

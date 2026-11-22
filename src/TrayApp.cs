@@ -138,6 +138,15 @@ namespace MozaHud
                           "', fw " + baseInfo.Firmware + ", max torque " + baseInfo.PeakTorquePct + " %)");
             };
 
+            // Limit guard. On 2026-11-22 MozaHud's own ceiling measurement (CeilingCheck) took 4.4 Nm as the limit of a
+            // base that clips at 5.5 Nm and kept it for hours. Whatever sets the limit, the torque can't go past it:
+            // if it clearly does (OverLimitSamples readings over limit + OverLimitNm), a measured ceiling is dropped,
+            // and a changed max torque setting goes back to the previous one. A new max torque setting also needs
+            // ConfirmReplies identical replies in a row (about 15 s) before it is used.
+            int pendingPct = 0, pendingCount = 0, distrustedPct = 0, lastLoggedPct = 0, overLimit = 0, prevPct = 100;
+            const int ConfirmReplies = 3, OverLimitSamples = 3;
+            const double OverLimitNm = 0.25;
+
             var seen = new System.Collections.Generic.HashSet<byte>();
             Action<byte, int> onValue = (id, raw) =>
             {
@@ -145,7 +154,36 @@ namespace MozaHud
                 if (seen.Add(id)) Log.Write("first reply for id " + id + ": raw " + raw);
                 switch (id)
                 {
-                    case MozaLink.IdTorque: window.Add(now, raw); ceiling.Add(raw); break;
+                    case MozaLink.IdTorque:
+                        window.Add(now, raw); ceiling.Add(raw);
+                        double nm = Math.Abs(raw - MozaLink.TorqueZero) / 10.0;
+                        bool suspect = baseInfo.MeasuredNm.HasValue || baseInfo.PeakTorquePct != prevPct;
+                        if (nm > window.MaxNm + OverLimitNm && suspect)
+                        {
+                            if (++overLimit >= OverLimitSamples)
+                            {
+                                if (baseInfo.MeasuredNm.HasValue)
+                                {
+                                    Log.Write(string.Format("Torque {0:0.0} Nm is past the measured ceiling {1:0.0} Nm: that measurement is wrong, dropped",
+                                        nm, window.MaxNm));
+                                    Settings.Set("measured_nm." + baseInfo.Model.Replace(' ', '_') + "." + baseInfo.PeakTorquePct, 0);
+                                }
+                                else
+                                {
+                                    Log.Write(string.Format("Torque {0:0.0} Nm is past the limit {1:0.0} Nm from the max torque reading of {2} %: " +
+                                        "that reading is wrong, back to {3} % (ignored until the base reports another value)",
+                                        nm, window.MaxNm, baseInfo.PeakTorquePct, prevPct));
+                                    distrustedPct = baseInfo.PeakTorquePct;
+                                    baseInfo.PeakTorquePct = prevPct;
+                                    pendingCount = 0;
+                                }
+                                overLimit = 0;
+                                ceiling.Reset();
+                                if (baseInfo.Model.Length > 0) applyBase();
+                            }
+                        }
+                        else if (nm <= window.MaxNm) overLimit = 0;
+                        break;
                     case MozaLink.IdMcu: temps.Mcu = raw / 100.0; break;
                     case MozaLink.IdMosfet: temps.Mosfet = raw / 100.0; break;
                     case MozaLink.IdMotor: temps.Motor = raw / 100.0; tempAt = now; break;
@@ -155,9 +193,17 @@ namespace MozaHud
             // base rotation setting (half degrees): the soft lock is at ±half of it
             Action<byte, int> onSetting = (id, raw) =>
             {
-                if (id == MozaLink.SettingPeakTorque && raw > 0 && raw <= 100 && raw != baseInfo.PeakTorquePct)
+                if (id == MozaLink.SettingPeakTorque)
                 {
+                    if (raw != lastLoggedPct) { Log.Write("Max torque reading [40,18]: raw " + raw); lastLoggedPct = raw; }
+                    if (raw != distrustedPct) distrustedPct = 0;   // the base moved on: a later return to that value counts again
+                    if (raw <= 0 || raw > 100 || raw == baseInfo.PeakTorquePct || raw == distrustedPct) { pendingCount = 0; return; }
+                    if (raw != pendingPct) { pendingPct = raw; pendingCount = 0; }
+                    if (++pendingCount < ConfirmReplies) return;
+                    Log.Write("Max torque setting " + baseInfo.PeakTorquePct + " % → " + raw + " % (confirmed by " + ConfirmReplies + " replies)");
+                    prevPct = baseInfo.PeakTorquePct;
                     baseInfo.PeakTorquePct = raw;
+                    pendingCount = 0; overLimit = 0;
                     ceiling.Reset();
                     if (baseInfo.Model.Length > 0) applyBase();
                     return;

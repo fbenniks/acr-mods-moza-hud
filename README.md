@@ -48,9 +48,19 @@ run, so the next run lands just under your target.
 
 ![Good: the FFB gain fits this stage](docs/images/advice-good.png)
 
-The target is up to you: **Target clipping** (top right) sets how much clipping you want — 2.5 % of the driving time
-by default, with green from 1.5 % up to it. A few short taps on kerbs and bumps are harmless; long stretches through
-corners are not.
+Not every clip counts. A lone spike on a kerb or bump only cuts the top off one hit, and you hardly feel it. Many clips
+close together, or one long clip, keep the force flat for a whole stretch, and that's where you lose the road. So
+MozaHud counts **long clips** (by default longer than 0.20 s) and **bursts** of spikes (at least 3 clips within
+2.00 s), with a target of 1 % of the driving time (green from 0.6 % up to it). On a 6-minute stage, 1 % is 3.6 s
+of counted clipping in all: about a dozen short flat moments spread over the stage. In the graph, counted clipping is
+red and lone spikes are amber.
+
+The rule is up to you: the **Clipping rule** button (top right) opens the settings. You set the spike length, the
+burst, how much heavier a long clip counts than a burst, and the target, or pick a preset: *Very little spiking*, *Balanced* (the default), *Aggressive* or *High gain*.
+A picture drawn from your values shows what counts, another shows what the target means in seconds on your last
+stage, and your recent runs are judged live while you change it.
+
+![Clipping settings: what counts, the rule, and recent runs judged live](docs/images/clip-settings.png)
 
 ![Header with live values and the Allowed clipping setting](docs/images/header.png)
 

@@ -24,6 +24,7 @@ namespace MozaHud
         readonly Timer _timer = new Timer { Interval = 1000 };
         readonly object _liveItem = new object();
         readonly CheckBox _withWindows = new CheckBox(), _startMinimized = new CheckBox();
+        readonly Button _ruleButton = new Button();
         bool _syncing;
         StageRun _shown;
         DateTime _nextLiveAnalysis;
@@ -52,21 +53,15 @@ namespace MozaHud
             _status.SetBounds(140, 10, 600, 20); _status.ForeColor = Theme.Text; _status.Font = BoldFont;
             _base.SetBounds(140, 31, 900, 18); _base.ForeColor = Theme.Muted; _base.Font = SmallFont;
             _status.Anchor = _base.Anchor = AnchorStyles.Left | AnchorStyles.Top | AnchorStyles.Right;
-            // target clipping setting, top right
-            var allowLabel = new Label { Text = "Target clipping", AutoSize = true, ForeColor = Theme.Muted, Font = SmallFont };
-            var allow = new NumericUpDown
-            {
-                DecimalPlaces = 1, Increment = 0.1m, Minimum = 0, Maximum = 50, Width = 58,
-                Value = (decimal)Settings.TargetClipPct, BackColor = Theme.PanelAlt, ForeColor = Theme.Text,
-                BorderStyle = BorderStyle.FixedSingle, TextAlign = HorizontalAlignment.Right, Font = BoldFont,
-            };
-            var pct = new Label { Text = "%", AutoSize = true, ForeColor = Theme.Muted, Font = BoldFont };
-            allow.ValueChanged += (s, e) => Settings.SetTargetClipPct((double)allow.Value);
+            // clipping rule and target, top right (opens the clipping settings)
+            _ruleButton.FlatStyle = FlatStyle.Flat; _ruleButton.BackColor = Theme.PanelAlt; _ruleButton.ForeColor = Theme.Text;
+            _ruleButton.Font = SmallFont; _ruleButton.Cursor = Cursors.Hand; _ruleButton.Height = 40; _ruleButton.Padding = new Padding(6, 0, 6, 0);
+            _ruleButton.TextAlign = ContentAlignment.MiddleLeft;
+            _ruleButton.FlatAppearance.BorderColor = Theme.Border;
+            _ruleButton.Click += (s, e) => { using (var dlg = new ClipSettingsDialog(Icon)) dlg.ShowDialog(this); };
+            UpdateRuleButton();
             var tip = new ToolTip();
-            const string tipText = "How much of the driving time the motor should be at its limit (clipping).\n" +
-                "Above it MozaHud suggests less FFB gain; under 60 % of it (1.5 % for 2.5 %) more gain,\n" +
-                "so you don't leave feel on the table. Green in between.";
-            tip.SetToolTip(allow, tipText); tip.SetToolTip(allowLabel, tipText);
+            tip.SetToolTip(_ruleButton, "Which clipping counts for the FFB advice, and your target.\nClick for the settings, with pictures and your recent runs.");
             // startup options, left of the target clipping
             _withWindows.Text = "Start with Windows";
             _startMinimized.Text = "Start minimized";
@@ -83,15 +78,13 @@ namespace MozaHud
             Activated += (s, e) => SyncStartup();
             Action placeAllow = () =>
             {
-                pct.Location = new Point(header.Width - 16 - pct.Width, 20);
-                allow.Location = new Point(pct.Left - 2 - allow.Width, 16);
-                allowLabel.Location = new Point(allow.Left - 6 - allowLabel.Width, 21);
-                int cbLeft = allowLabel.Left - 24 - Math.Max(_withWindows.Width, _startMinimized.Width);
+                _ruleButton.Location = new Point(header.Width - 16 - _ruleButton.Width, 9);
+                int cbLeft = _ruleButton.Left - 24 - Math.Max(_withWindows.Width, _startMinimized.Width);
                 _withWindows.Location = new Point(cbLeft, 8);
                 _startMinimized.Location = new Point(cbLeft, 30);
                 _status.Width = _base.Width = Math.Max(100, cbLeft - 150);
             };
-            header.Controls.AddRange(new Control[] { logo, _status, _base, _withWindows, _startMinimized, allowLabel, allow, pct });
+            header.Controls.AddRange(new Control[] { logo, _status, _base, _withWindows, _startMinimized, _ruleButton });
             header.Resize += (s, e) => placeAllow();
             Load += (s, e) => placeAllow();
             _status.Anchor = _base.Anchor = AnchorStyles.Left | AnchorStyles.Top;
@@ -133,7 +126,7 @@ namespace MozaHud
             var help = new Label
             {
                 Dock = DockStyle.Bottom, Height = 22, ForeColor = Theme.Faint, Font = SmallFont, TextAlign = ContentAlignment.BottomLeft,
-                Text = "Scroll to zoom, drag to move, double-click for the whole stage. Clipping at the rotation limit (soft lock) is shown grey and not counted.",
+                Text = "Scroll to zoom, drag to move, double-click for the whole stage. Red: counted clipping. Amber: lone spikes (not counted). Grey: soft lock.",
             };
             _chart.Dock = DockStyle.Fill;
             right.Controls.Add(_chart);
@@ -274,7 +267,7 @@ namespace MozaHud
                 return;
             }
             string why = string.Format("Suggested {0} (was {1}): clipping {2:0.0} % → about {3:0.0} % (target {4:0.0} %).",
-                a.SuggestedGain.Value, run.Gain, a.ClipPct, a.PredictedPct, a.TargetPct);
+                a.SuggestedGain.Value, run.Gain, a.CountedPct, a.PredictedPct, a.TargetPct);
             using (var dlg = new ApplyGainDialog(now, run.Car, a.SuggestedGain.Value, why, Icon))
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
@@ -294,8 +287,24 @@ namespace MozaHud
         void OnSettingsChanged()
         {
             if (IsDisposed) return;
+            if (InvokeRequired) { BeginInvoke((Action)OnSettingsChanged); return; }
+            UpdateRuleButton();
             _list.Invalidate();
             ShowSelected(false);
+            UpdateApplyButton();
+        }
+
+        void UpdateRuleButton()
+        {
+            var r = Settings.Rule;
+            _ruleButton.Text = "⚙  Clipping rule: " + r.Describe() + "\n     Target " + r.TargetPct.ToString("0.0") + " %";
+            using (var g = _ruleButton.CreateGraphics())
+            {
+                var size = g.MeasureString(_ruleButton.Text, _ruleButton.Font);
+                _ruleButton.Width = (int)size.Width + 24;
+            }
+            var h = _ruleButton.Parent;
+            if (h != null) _ruleButton.Location = new Point(h.Width - 16 - _ruleButton.Width, 9);
         }
 
         void OnStartupChanged()
@@ -376,10 +385,15 @@ namespace MozaHud
             UpdateApplyButton();
             _stats.Set(new[]
             {
-                new[] { "CLIPPING", a.ClipPct.ToString("0.0") + " %",
-                    "Share of the driving time (over 5 km/h, soft lock not counted) in which the motor hit its torque limit.\n" +
+                new[] { "COUNTED CLIPPING", a.CountedPct.ToString("0.0") + " %",
+                    "Share of the driving time (over 5 km/h, soft lock not counted) in which the motor was at its torque limit,\n" +
+                    "counted by your clipping rule (" + a.Rule.Describe() + "). Long clips count ×" + a.Rule.LongWeight.ToString("0.00") + " their time.\n" +
                     "Compared with your target zone (" + a.ZoneLowPct.ToString("0.0") + "–" + a.TargetPct.ToString("0.0") + " %) for the advice." },
-                new[] { "LONGEST CLIP", a.ClipEpisodes == 0 ? "—" : a.LongestClipS.ToString("0.0") + " s",
+                new[] { "ALL CLIPPING", a.ClipPct.ToString("0.0") + " %",
+                    "Every 0.1 s in which the motor hit its limit, lone spikes included.\n" +
+                    "The difference with counted clipping is lone spikes (amber in the graph): a bump or kerb that only\n" +
+                    "cuts the top off one hit. You hardly feel those." },
+                new[] { "LONGEST CLIP", a.ClipEpisodes == 0 ? "—" : a.LongestClipS.ToString("0.00") + " s",
                     "The longest single stretch the motor stayed at its limit without a break.\n" +
                     "0.1–0.2 s: a bump, kerb or landing — you barely lose anything.\n" +
                     "0.5 s or more: a whole part of a corner at the limit — the force stays flat there and you lose\n" +
@@ -397,11 +411,12 @@ namespace MozaHud
                     "Time with the wheel at the end of its rotation (soft lock). Clipping there is the lock pushing back, not FFB, and isn't counted." },
                 new[] { "MOTOR MAX", a.MaxMotor.ToString("0") + " °C" },
                 new[] { "MOSFET MAX", a.MaxMosfet.ToString("0") + " °C" },
-                new[] { "BASE", (string.IsNullOrEmpty(run.Base) ? "" : run.Base + " · ") + run.MaxNm.ToString("0.0") + " Nm" },
+                new[] { "BASE", (string.IsNullOrEmpty(run.Base) ? "" : run.Base + " · ") + (a.LimitCorrected ? a.LimitNm : run.MaxNm).ToString("0.0") + " Nm",
+                    a.LimitCorrected ? "Saved with " + run.MaxNm.ToString("0.0") + " Nm, but the torque reached " + a.LimitNm.ToString("0.0") + " Nm: judged at that." : null },
                 new[] { "ROTATION", run.RotationDeg > 0 ? run.RotationDeg + "°" : "?" },
                 new[] { "FFB GAIN", run.Gain.HasValue ? run.Gain.Value.ToString() : "?" },
             });
-            _chart.SetData(run.Points, run.MaxNm, newRun);
+            _chart.SetData(run.Points, a.LimitNm > 0 ? a.LimitNm : run.MaxNm, newRun, a.Clipped, a.Counted);
         }
 
         void RefreshLive()

@@ -48,8 +48,9 @@ from then on (remembered per model and max torque setting in `settings.ini`, log
 - **Clipping**: a raw sample within 0.15 Nm of the base's limit. Stage runs store per 0.1 s whether any sample clipped.
 - **Soft lock**: the wheel position comes from the Windows joystick axis, which spans exactly the base's rotation
   (AC Rally's steering value is identical). Within 3 % of full lock, clipping is the lock pushing back and isn't counted.
-- **Clipping moments**: consecutive clipped 0.1 s steps while driving are one moment; standing still or the soft lock
-  ends a moment. Longest and average length come from these.
+- **Clips**: consecutive torque samples at the limit while driving are one clip (a clip can run on into the next
+  0.1 s point); standing still or the soft lock ends it. Longest and average length come from these, to about 0.03 s
+  (0.1 s in runs recorded before the samples were saved).
 
 ## Stage recording (AC Rally)
 
@@ -65,31 +66,55 @@ lap and `iCurrentTime` fields at 0. What MozaHud uses:
   Hyundai i20N Rally2`, and the ids from `Stage loaded: … -> MonteCarlo/Sisteron`), otherwise from the game's save file.
 
 Runs are CSV files in `%APPDATA%\MozaHud\stages` (10 points per second: smoothed torque, raw peak, clipping, soft lock,
-wheel, speed, temperatures). The last 100 runs are kept, none older than 60 days; runs with under 20 s of driving
+wheel, speed, temperatures, and every raw torque sample of that 0.1 s as 2 hex digits each, |torque| in 0.1 Nm;
+MozaHud reads the torque 30–40 times per second). Runs saved before 2026-11-22 have no samples column. The last 100 runs are kept, none older than 60 days; runs with under 20 s of driving
 aren't saved.
 
 ## FFB gain advice
 
 Only time while driving (over 5 km/h) and away from the soft lock counts.
 
-The **target clipping** setting (default 2.5 %) is a goal with a green zone below it, from 60 % of the target up to
-the target (1.5–2.5 % by default):
+Clipping is recounted from each point's raw peak against the base's limit (raw peak ≥ limit − 0.15 Nm). If a run's
+torque clearly went past its saved limit (at least 3 points over limit + 0.25 Nm), the saved limit was wrong and the
+highest raw peak is used instead; the advice then says so.
 
-- Above the target → *a bit strong* (less than 1.5 points over) or *too strong*, with a lower gain.
+The **clipping rule** decides which clipping counts. A clip is one stretch at the limit (consecutive clipped 0.1 s
+points). Clips up to the spike length S are spikes; longer clips (long clips) always count. Spikes count only in a
+burst: at least N clips from the first one's start to the last one's end within W seconds (N ≥ 2). S and W are set
+in steps of 0.05 s, the finest that is measured: a clip's length comes from the torque samples (about 0.03 s each).
+Runs recorded before the samples were saved are judged at 0.1 s. A long clip counts as its time × the long clip weight (default
+1.5): one flat stretch removes all feel there, including the force drop when the front loses grip, while spikes in a
+burst only cap the peaks and keep their timing. Presets:
+
+| Preset | Spike length | Burst | Long clip weight | Target |
+|---|---|---|---|---|
+| Very little spiking | 0.10 s | 2 within 3.00 s | ×2.00 | 0.5 % |
+| Balanced (default) | 0.20 s | 3 within 2.00 s | ×1.50 | 1.0 % |
+| Aggressive | 0.30 s | 3 within 1.50 s | ×1.25 | 2.0 % |
+| High gain | 0.40 s | 4 within 1.50 s | ×1.00 | 3.0 % |
+
+The share of the driving time in counted clipping is compared with the **target**, which has a green zone below it,
+from 60 % of the target up to the target (0.6–1.0 % for Balanced):
+
+- Above the target → *a bit strong* (less than 60 % of the target over) or *too strong*, with a lower gain.
 - In the zone → *good*.
 - Under the zone → *room to spare* (blue), with a higher gain. Only after at least 60 s of driving; at the game's
   maximum of 200 it points to the base's strength in Pit House instead.
 
-The suggested gain is in steps of 1: the highest gain whose **predicted** clipping stays 0.3 points under the target
-(and not under the zone). The prediction scales the run's raw torque peaks (one per 0.1 s) by new gain / old gain,
-since AC Rally's force scales linearly with the gain:
+The suggested gain is in steps of 1: the highest gain whose **predicted** counted clipping stays a little under the
+target (0.3 points, at most 20 % of the target) and not under the zone. The prediction scales the run's raw torque peaks
+(one per 0.1 s) by new gain / old gain, since AC Rally's force scales linearly with the gain, and then applies the rule
+again, so spikes that would join up into a burst count:
 
 - Going up it is exact for every peak below the limit: a peak clips once peak × new/old reaches the limit.
 - Going down, a clipped peak's real size is unknown; how far past the limit they went is estimated from how fast the
-  peaks thin out in the last 1 Nm below the limit (an exponential tail).
+  peaks thin out in the last 1 Nm below the limit (an exponential tail). Which clips stay is drawn at random, averaged
+  over 32 fixed draws so the result is repeatable.
 
-Checked on runs of the same stage at two gains: Sisteron 135 → predicted 5.7 % at 150, measured 5.35 %; Greece 180 →
-4.4 % at 200, measured 4.47 %; down, Sisteron 150 → about 2.5 % at 135, measured 2.32 %. One recommendation changes the
+Checked (all clipping) on runs of the same stage at two gains: Sisteron 135 → predicted 5.7 % at 150, measured 5.35 %;
+Greece 180 → 4.4 % at 200, measured 4.47 %; down, Sisteron 150 → about 2.5 % at 135, measured 2.32 %. Counted
+clipping with Balanced: Greece 180 → 2.5 % at 200, measured 2.55 %; down, Greece 200 → 0.7 % at 180, measured 0.4 %
+(going down errs on the safe side). One recommendation changes the
 gain by at most +15 % / −25 %, so one careful (or wild) run can't cause a big jump. `MozaHud.exe --advice | more`
 prints the advice and predictions for every saved run.
 

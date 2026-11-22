@@ -146,6 +146,7 @@ namespace MozaHud
                 T = (float)(now - _runStartUtc).TotalSeconds,
                 Tq = (float)b.SmoothNm,
                 TqMax = (float)b.MaxRawNm,
+                Samples = b.Raw,
                 Clip = b.Clipped > 0,
                 Lock = lockNow,
                 Wheel = (float)(wheel ?? 0),
