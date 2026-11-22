@@ -115,7 +115,18 @@ the value in the dialog and save it for this car on this stage, this car across 
 or every stage default in the rally. StageSwitch uses the saved gain when you load a matching stage. It can also
 apply it while you're on that stage. [AC Rally StageSwitch](https://github.com/fbenniks/acr-mods-stageswitch)
 
-![Apply in StageSwitch: four choices](docs/images/apply-in-stageswitch.png)
+MozaHud records and analyses FFB gain up to **400%**, and you can set gains up to **400%** in the StageSwitch dialog.
+AC Rally’s own FFB gain menu supports values up to 200% and shows **0** for higher gains. The MozaHud recording
+shows the gain reported by StageSwitch.
+
+For recommendations above **200%**, MozaHud shows **Open StageSwitch on GitHub** when StageSwitch isn’t running.
+When StageSwitch is running, use **Apply in StageSwitch…**.
+
+![MozaHud recommends 229% and links to StageSwitch on GitHub](docs/images/extended-gain-advice.png)
+
+![The same 229% recommendation with the Apply in StageSwitch button](docs/images/extended-gain-apply.png)
+
+![Apply in StageSwitch dialog with gain set to 400% and four preset choices](docs/images/apply-in-stageswitch.png)
 
 ### Live in your in-game overlay (MSI Afterburner / RivaTuner)
 

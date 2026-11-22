@@ -92,7 +92,7 @@ namespace MozaHud
         public const double AimMargin = 0.3;      // suggestions aim this far under the target (at most 20 % of it)
         public const int MaxRaisePct = 15;        // per recommendation: one careful run shouldn't cause a big jump
         public const int MaxLowerPct = 25;
-        public const int MaxGain = 200;           // AC Rally's FFB gain range is 0–200
+        public const int MaxGain = 400;           // StageSwitch's supported FFB gain maximum
         const int RaiseMinPoints = 600;           // 60 s of driving before suggesting more gain
         const double ClipMarginNm = 0.15;         // as TorqueWindow: within this of the limit counts as clipping
         const double TailFitNm = 1.0;             // peaks this far below the limit set the estimated tail
@@ -315,7 +315,7 @@ namespace MozaHud
                     a.Verdict = Verdict.Raise;
                     a.Headline = "Room to spare, but the gain is at its maximum";
                     a.Detail = low + "the motor has force you aren't feeling.";
-                    a.Hint = "The game's gain is at its maximum (200): raise the base's FFB strength in Pit House if you want more force.";
+                    a.Hint = "MozaHud supports gain up to " + MaxGain + "%.";
                 }
                 else if (a.DrivingPoints < RaiseMinPoints)
                 {

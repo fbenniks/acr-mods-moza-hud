@@ -37,11 +37,17 @@ namespace MozaHud
             var gl = new Label { Text = "FFB gain", ForeColor = Theme.Muted, AutoSize = true, Location = new Point(22, 76) };
             _gain = new NumericUpDown
             {
-                Minimum = 0, Maximum = 200, Increment = 1, Value = Math.Max(0, Math.Min(200, suggested)), Width = 70,
+                Minimum = 0, Maximum = Analysis.MaxGain, Increment = 1,
+                Value = Math.Max(0, Math.Min(Analysis.MaxGain, suggested)), Width = 70,
                 Location = new Point(90, 73), BackColor = Theme.PanelAlt, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle,
                 TextAlign = HorizontalAlignment.Right, Font = new Font("Segoe UI Semibold", 10f),
             };
-            Controls.AddRange(new Control[] { title, sub, gl, _gain });
+            var menuNote = new Label
+            {
+                Text = "AC Rally’s menu supports up to " + StageSwitchLink.GameMenuMaxGain + "% and shows 0 for higher gains.",
+                ForeColor = Theme.Muted, Font = Small, Location = new Point(170, 71), Size = new Size(350, 34),
+            };
+            Controls.AddRange(new Control[] { title, sub, gl, _gain, menuNote });
 
             string car = string.IsNullOrEmpty(now.CarName) ? carName : now.CarName;
             int y = 112;

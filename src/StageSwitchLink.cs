@@ -13,6 +13,8 @@ namespace MozaHud
     public static class StageSwitchLink
     {
         const string PipeName = "ACRallyStageSwitch";
+        public const int GameMenuMaxGain = 200;
+        public const string RepositoryUrl = "https://github.com/fbenniks/acr-mods-stageswitch";
 
         public static bool IsRunning()
         {

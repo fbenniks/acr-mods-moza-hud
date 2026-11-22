@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
@@ -119,8 +120,9 @@ namespace MozaHud
             // ---- details ----
             var right = new Panel { Dock = DockStyle.Fill, Padding = new Padding(20, 14, 20, 16), BackColor = Theme.Bg };
             _header.Dock = DockStyle.Top; _header.Height = 62;
-            _advice.Dock = DockStyle.Top; _advice.Height = 104;
+            _advice.Dock = DockStyle.Top;
             _advice.ApplyClicked += ApplyInStageSwitch;
+            _advice.OpenStageSwitchClicked += OpenStageSwitchOnGitHub;
             var gap1 = new Panel { Dock = DockStyle.Top, Height = 10 };
             _stats.Dock = DockStyle.Top; _stats.Height = 52;
             var help = new Label
@@ -244,7 +246,19 @@ namespace MozaHud
             var run = _shown;
             string r, s;
             bool on = _stageSwitchRunning && run != null && run.Analyse().SuggestedGain.HasValue && StageSwitchLink.Keys(run, out r, out s);
-            _advice.SetApplyVisible(on);
+            _advice.SetStageSwitchState(_stageSwitchRunning, on);
+        }
+
+        void OpenStageSwitchOnGitHub()
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(StageSwitchLink.RepositoryUrl) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, ex.Message, "Could not open StageSwitch on GitHub", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         void ApplyInStageSwitch()
@@ -365,6 +379,7 @@ namespace MozaHud
             {
                 _header.Set(null, "No stages recorded yet", null, "Drive a stage in AC Rally with MozaHud running; it is recorded automatically.");
                 _advice.Set(null, null);
+                UpdateApplyButton();
                 _stats.Set(null);
                 _chart.SetData(null, 5.5, true);
                 return;
@@ -561,11 +576,15 @@ namespace MozaHud
     /// <summary>The coloured advice panel: headline, explanation and the suggested gain.</summary>
     sealed class AdviceBox : Control
     {
+        const int AdviceHeight = 104;
+        const int StageSwitchRowHeight = 44;
         StageRun _run; Analysis _a;
+        bool _showStageSwitchLink;
         static readonly Font Head = new Font("Segoe UI Semibold", 12.5f);
         static readonly Font Body = new Font("Segoe UI", 9.5f);
         static readonly Font Big = new Font("Segoe UI Semibold", 20f);
         static readonly Font Small = new Font("Segoe UI", 8.5f);
+        static readonly Font ActionFont = new Font("Segoe UI Semibold", 9f);
 
         readonly Button _apply = new Button
         {
@@ -573,22 +592,55 @@ namespace MozaHud
             Font = new Font("Segoe UI", 8.5f), Size = new Size(150, 24), Visible = false, Cursor = Cursors.Hand,
         };
 
-        /// <summary>The "Apply in StageSwitch…" button was clicked.</summary>
+        readonly Label _stageSwitchNote = new Label
+        {
+            Text = "Gains above " + StageSwitchLink.GameMenuMaxGain + "% require StageSwitch.",
+            Font = Small, ForeColor = Theme.Muted, BackColor = Theme.Panel, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Visible = false,
+        };
+        readonly Button _openStageSwitch = new Button
+        {
+            Text = "Open StageSwitch on GitHub", FlatStyle = FlatStyle.Flat, UseVisualStyleBackColor = false,
+            BackColor = Color.FromArgb(35, 54, 77), ForeColor = Color.FromArgb(171, 215, 255),
+            Font = ActionFont, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(12, 4, 12, 4), Visible = false, Cursor = Cursors.Hand,
+        };
+
         public event Action ApplyClicked;
+        public event Action OpenStageSwitchClicked;
 
         public AdviceBox()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
             _apply.FlatAppearance.BorderColor = Theme.Border;
             _apply.Click += (s, e) => { var h = ApplyClicked; if (h != null) h(); };
-            Controls.Add(_apply);
-            Resize += (s, e) => _apply.Location = new Point(Width - _apply.Width - 14, Height - _apply.Height - 10);
+            _openStageSwitch.FlatAppearance.BorderColor = Color.FromArgb(74, 106, 145);
+            _openStageSwitch.FlatAppearance.MouseOverBackColor = Color.FromArgb(43, 68, 98);
+            _openStageSwitch.FlatAppearance.MouseDownBackColor = Color.FromArgb(30, 47, 67);
+            _openStageSwitch.Click += (s, e) => { var h = OpenStageSwitchClicked; if (h != null) h(); };
+            Controls.AddRange(new Control[] { _apply, _stageSwitchNote, _openStageSwitch });
+            Height = AdviceHeight;
+            Resize += (s, e) => LayoutActions();
+            _openStageSwitch.SizeChanged += (s, e) => LayoutActions();
+            LayoutActions();
         }
 
         public void Set(StageRun run, Analysis a) { _run = run; _a = a; Invalidate(); }
 
-        /// <summary>Shown when StageSwitch runs and there is a gain to apply.</summary>
-        public void SetApplyVisible(bool on) { if (_apply.Visible != on) { _apply.Visible = on; Invalidate(); } }
+        public void SetStageSwitchState(bool running, bool canApply)
+        {
+            _showStageSwitchLink = !running && _a != null && _a.SuggestedGain.GetValueOrDefault() > StageSwitchLink.GameMenuMaxGain;
+            _apply.Visible = canApply;
+            _stageSwitchNote.Visible = _openStageSwitch.Visible = _showStageSwitchLink;
+            Height = AdviceHeight + (_showStageSwitchLink ? StageSwitchRowHeight : 0);
+            Invalidate();
+        }
+
+        void LayoutActions()
+        {
+            _apply.Location = new Point(Width - _apply.Width - 14, AdviceHeight - _apply.Height - 10);
+            _openStageSwitch.Location = new Point(Width - _openStageSwitch.Width - 14, Height - _openStageSwitch.Height - 8);
+            _stageSwitchNote.SetBounds(18, _openStageSwitch.Top, Math.Max(0, _openStageSwitch.Left - 28), _openStageSwitch.Height);
+        }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -617,13 +669,14 @@ namespace MozaHud
                 using (var b = new SolidBrush(Theme.Muted)) g.DrawString(gainSub, Small, b, Width - rightW + 2, top + 38);
             }
             using (var b = new SolidBrush(c)) g.DrawString(_a.Headline, Head, b, 18, 10);
+            float bodyHeight = _showStageSwitchLink ? Height - StageSwitchRowHeight : Height;
             float textW = Width - 36 - rightW;
             float hintH = string.IsNullOrEmpty(_a.Hint) ? 0 : g.MeasureString(_a.Hint, Small, (int)textW).Height;
             using (var b = new SolidBrush(Theme.Muted))
-                g.DrawString(_a.Detail, Body, b, new RectangleF(18, 38, textW, Height - 44 - hintH));
+                g.DrawString(_a.Detail, Body, b, new RectangleF(18, 38, textW, bodyHeight - 44 - hintH));
             if (hintH > 0)
                 using (var b = new SolidBrush(Color.FromArgb(150, 205, 170)))
-                    g.DrawString("→ " + _a.Hint, Small, b, new RectangleF(18, Height - 8 - hintH, textW, hintH + 2));
+                    g.DrawString("→ " + _a.Hint, Small, b, new RectangleF(18, bodyHeight - 8 - hintH, textW, hintH + 2));
         }
     }
 }

@@ -254,7 +254,7 @@ namespace MozaHud
             {
                 if (k < 0 || k + 4 > save.Length) continue;
                 float g = BitConverter.ToSingle(save, k);
-                if (g >= 0f && g <= 2.0001f) return (int)Math.Round(g * 100);
+                if (g >= 0f && g <= Analysis.MaxGain / 100f + 0.0001f) return (int)Math.Round(g * 100);
             }
             return null;
         }
